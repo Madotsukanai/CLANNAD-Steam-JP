@@ -1,0 +1,10 @@
+LIBRARY "steam_api"
+EXPORTS
+    SteamInternal_CreateInterface=proxy_SteamInternal_CreateInterface @1
+    SteamAPI_GetHSteamPipe=proxy_SteamAPI_GetHSteamPipe @2
+    SteamAPI_GetHSteamUser=proxy_SteamAPI_GetHSteamUser @3
+    SteamAPI_RunCallbacks=proxy_SteamAPI_RunCallbacks @4
+    SteamAPI_RegisterCallback=proxy_SteamAPI_RegisterCallback @5
+    SteamAPI_Shutdown=proxy_SteamAPI_Shutdown @6
+    SteamAPI_Init=proxy_SteamAPI_Init @7
+    SteamAPI_UnregisterCallback=proxy_SteamAPI_UnregisterCallback @8
