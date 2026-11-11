@@ -118,3 +118,19 @@ python3 install_jp.py --remove
 ├── Makefile           # steam_api.dll ビルド用Makefile
 └── README.md          # 本ドキュメント
 ```
+
+---
+
+## ライセンス・権利表記
+
+### 本プロジェクト
+- 本ツールのソースコードは MIT License の下で公開されています。
+
+### 使用・参照リソース
+- **Noto Sans CJK (Noto Sans Mono CJK JP)**: [SIL Open Font License 1.1](http://scripts.sil.org/OFL)
+- **Pillow**: [HPND License](https://github.com/python-pillow/Pillow/blob/main/LICENSE)
+
+### 免責事項 (Disclaimer)
+- 本プロジェクトは有志による非公式のファンメイドツールであり、公式の権利者（株式会社ビジュアルアーツ、Key、および Valve Corporation）とは一切関係ありません。
+- 本ツールの利用には Steam 版『CLANNAD』の正規購入が必要です。ゲーム本体の著作権で保護されたデータ自体の再配布は行っておりません。
+- 本ツールの使用によって生じたいかなる損害や問題についても、制作者は責任を負いかねます。自己責任にてご利用ください。
