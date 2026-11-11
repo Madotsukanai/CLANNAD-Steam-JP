@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, json, os, re, shutil, struct, sys, tempfile, urllib.request
+import argparse, atexit, json, os, re, shutil, struct, sys, tempfile, urllib.request
 from bisect import bisect_left
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -383,14 +383,11 @@ def ensure_font(game):
         data=tmp.read_bytes()
     for d in [game/'dat_jp', game/'dat']:
         atomic_write(d/FONT_NAME, data)
-    # keep a persistent copy next to script for UI rendering
-    fpath=Path(__file__).resolve().parent/FONT_NAME
-    try:
-        atomic_write(fpath, data)
-    except Exception:
-        # fallback: write to temp persistent file
-        fpath=Path(tempfile.gettempdir())/FONT_NAME
-        atomic_write(fpath, data)
+    # UI描画用のフォントは一時ディレクトリに置き、終了時に削除する（カレントディレクトリには残さない）
+    fdir=Path(tempfile.mkdtemp(prefix='clannad_font_'))
+    atexit.register(shutil.rmtree, fdir, True)
+    fpath=fdir/FONT_NAME
+    atomic_write(fpath, data)
     _font_path_cache=fpath
     print(f'[font] installed {FONT_NAME}')
     return fpath
