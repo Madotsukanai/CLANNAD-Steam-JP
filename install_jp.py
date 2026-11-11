@@ -283,7 +283,9 @@ def convert_gameexe_text(text):
                 out.append(lines[no][pos:m.start()]); out.append('"%s"'%first[qi]); qi+=1; pos=m.end()
             out.append(lines[no][pos:]); lines[no]=''.join(out)
     repl=[('NotoSansMonoCJKsc-Regular.otf','NotoSansMonoCJKjp-Regular.otf'),
-          ('Noto Sans Mono CJK SC Regular','Noto Sans Mono CJK JP Regular'),
+          ('Noto Sans Mono CJK SC Regular','Noto Sans Mono CJK JP'),
+          ('Noto Sans Mono CJK SC','Noto Sans Mono CJK JP'),
+          ('Noto Sans Mono CJK JP Regular','Noto Sans Mono CJK JP'),
           ('畫面暗転','画面暗転'),('聲の再生中','声の再生中')]
     for o,r in repl: lines=[ln.replace(o,r) for ln in lines]
     new='\n'.join(lines)+('\n' if text.endswith('\n') else '')

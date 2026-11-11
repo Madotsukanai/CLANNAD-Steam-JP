@@ -78,6 +78,9 @@ typedef INT_PTR (WINAPI *PFN_DialogBoxIndirectParamW)(HINSTANCE,LPCDLGTEMPLATEW,
 typedef INT_PTR (WINAPI *PFN_DialogBoxParamW)(HINSTANCE,LPCWSTR,HWND,DLGPROC,LPARAM);
 typedef HWND (WINAPI *PFN_CreateDialogIndirectParamW)(HINSTANCE,LPCDLGTEMPLATEW,HWND,DLGPROC,LPARAM);
 typedef HWND (WINAPI *PFN_CreateDialogParamW)(HINSTANCE,LPCWSTR,HWND,DLGPROC,LPARAM);
+typedef int    (WINAPI *PFN_AddFontResourceExW)(LPCWSTR,DWORD,PVOID);
+typedef HFONT  (WINAPI *PFN_CreateFontW)(int,int,int,int,int,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,LPCWSTR);
+typedef HFONT  (WINAPI *PFN_CreateFontIndirectW)(const LOGFONTW*);
 
 static PFN_CreateFileW          Real_CreateFileW;
 static PFN_CreateFileA          Real_CreateFileA;
@@ -94,6 +97,9 @@ static PFN_DialogBoxIndirectParamW Real_DialogBoxIndirectParamW;
 static PFN_DialogBoxParamW      Real_DialogBoxParamW;
 static PFN_CreateDialogIndirectParamW Real_CreateDialogIndirectParamW;
 static PFN_CreateDialogParamW   Real_CreateDialogParamW;
+static PFN_AddFontResourceExW   Real_AddFontResourceExW;
+static PFN_CreateFontW          Real_CreateFontW;
+static PFN_CreateFontIndirectW  Real_CreateFontIndirectW;
 
 static void translate_dialog_and_children(HWND hwnd);
 
@@ -213,11 +219,21 @@ static const StrMap kStrMap[] = {
     { L"是(&Y)", L"はい(&Y)" },
     { L"否(&N)", L"いいえ(&N)" },
     { L"非(&N)", L"いいえ(&N)" },
+    { L"是(&&Y)", L"はい(&&Y)" },
+    { L"否(&&N)", L"いいえ(&&N)" },
+    { L"是 (&Y)", L"はい (&Y)" },
+    { L"否 (&N)", L"いいえ (&N)" },
+    { L"是 (Y)", L"はい (Y)" },
+    { L"否 (N)", L"いいえ (N)" },
     { L"是(Y)", L"はい(Y)" },
     { L"否(N)", L"いいえ(N)" },
     { L"非(N)", L"いいえ(N)" },
+    { L"是（Y）", L"はい（Y）" },
+    { L"否（N）", L"いいえ（N）" },
     { L"&Yes", L"はい(&Y)" },
     { L"&No", L"いいえ(&N)" },
+    { L"Yes", L"はい" },
+    { L"No", L"いいえ" },
     { L"是", L"はい" },
     { L"否", L"いいえ" },
     { L"非", L"いいえ" },
@@ -330,6 +346,52 @@ static void translate_dialog_and_children(HWND hwnd) {
     if (InterlockedCompareExchange(&g_in_translate, 1, 0) != 0) return;
     translate_window_text(hwnd);
     EnumChildWindows(hwnd, translate_child_text, 0);
+
+    HWND hYes = GetDlgItem(hwnd, IDYES);
+    if (hYes) {
+        wchar_t text[64];
+        if (Real_GetWindowTextW && Real_GetWindowTextW(hYes, text, 64)) {
+            if (wcsstr(text, L"是") || wcsstr(text, L"Yes") || wcsstr(text, L"yes")) {
+                Real_SetWindowTextW(hYes, L"はい(Y)");
+            } else {
+                translate_window_text(hYes);
+            }
+        }
+    }
+    HWND hNo = GetDlgItem(hwnd, IDNO);
+    if (hNo) {
+        wchar_t text[64];
+        if (Real_GetWindowTextW && Real_GetWindowTextW(hNo, text, 64)) {
+            if (wcsstr(text, L"否") || wcsstr(text, L"非") || wcsstr(text, L"No") || wcsstr(text, L"no")) {
+                Real_SetWindowTextW(hNo, L"いいえ(N)");
+            } else {
+                translate_window_text(hNo);
+            }
+        }
+    }
+    HWND hOk = GetDlgItem(hwnd, IDOK);
+    if (hOk) {
+        wchar_t text[64];
+        if (Real_GetWindowTextW && Real_GetWindowTextW(hOk, text, 64)) {
+            if (wcsstr(text, L"确") || wcsstr(text, L"確")) {
+                Real_SetWindowTextW(hOk, L"OK");
+            } else {
+                translate_window_text(hOk);
+            }
+        }
+    }
+    HWND hCancel = GetDlgItem(hwnd, IDCANCEL);
+    if (hCancel) {
+        wchar_t text[64];
+        if (Real_GetWindowTextW && Real_GetWindowTextW(hCancel, text, 64)) {
+            if (wcsstr(text, L"取") || wcsstr(text, L"消") || wcsstr(text, L"关") || wcsstr(text, L"關")) {
+                Real_SetWindowTextW(hCancel, L"キャンセル");
+            } else {
+                translate_window_text(hCancel);
+            }
+        }
+    }
+
     InterlockedExchange(&g_in_translate, 0);
 }
 
@@ -472,6 +534,69 @@ BOOL WINAPI Hook_SetDlgItemTextW(HWND h,int id,LPCWSTR s){
     return Real_SetDlgItemTextW(h,id, translate_w(s));
 }
 
+static const wchar_t* fix_font_face(const wchar_t *face) {
+    if (!face) return face;
+    if (wcsstr(face, L"Noto Sans Mono CJK SC") != NULL ||
+        wcsstr(face, L"NotoSansMonoCJKsc") != NULL ||
+        wcsstr(face, L"Noto Sans Mono CJK JP Regular") != NULL) {
+        return L"Noto Sans Mono CJK JP";
+    }
+    return face;
+}
+
+int WINAPI Hook_AddFontResourceExW(LPCWSTR name, DWORD fl, PVOID res) {
+    wchar_t buf[MAX_PATH * 2];
+    if (rewrite_w(name, buf, MAX_PATH * 2)) {
+        name = buf;
+    }
+    if (!Real_AddFontResourceExW) {
+        HMODULE g32 = GetModuleHandleW(L"GDI32.dll");
+        Real_AddFontResourceExW = (PFN_AddFontResourceExW)(void*)GetProcAddress(g32, "AddFontResourceExW");
+    }
+    return Real_AddFontResourceExW ? Real_AddFontResourceExW(name, fl, res) : 0;
+}
+
+HFONT WINAPI Hook_CreateFontW(
+    int cHeight, int cWidth, int cEscapement, int cOrientation,
+    int cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut,
+    DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision,
+    DWORD iQuality, DWORD iPitchAndFamily, LPCWSTR pszFaceName)
+{
+    if (g_jp == 1) {
+        pszFaceName = fix_font_face(pszFaceName);
+        if (iCharSet == 134 /* GB2312_CHARSET */) {
+            iCharSet = 128; /* SHIFTJIS_CHARSET */
+        }
+    }
+    if (!Real_CreateFontW) {
+        HMODULE g32 = GetModuleHandleW(L"GDI32.dll");
+        Real_CreateFontW = (PFN_CreateFontW)(void*)GetProcAddress(g32, "CreateFontW");
+    }
+    return Real_CreateFontW ? Real_CreateFontW(cHeight, cWidth, cEscapement, cOrientation,
+        cWeight, bItalic, bUnderline, bStrikeOut,
+        iCharSet, iOutPrecision, iClipPrecision,
+        iQuality, iPitchAndFamily, pszFaceName) : NULL;
+}
+
+HFONT WINAPI Hook_CreateFontIndirectW(const LOGFONTW *lplf) {
+    if (!lplf) return NULL;
+    LOGFONTW lf = *lplf;
+    if (g_jp == 1) {
+        const wchar_t *fixed = fix_font_face(lf.lfFaceName);
+        if (fixed != lf.lfFaceName) {
+            lstrcpynW(lf.lfFaceName, fixed, LF_FACESIZE);
+        }
+        if (lf.lfCharSet == 134 /* GB2312_CHARSET */) {
+            lf.lfCharSet = 128; /* SHIFTJIS_CHARSET */
+        }
+    }
+    if (!Real_CreateFontIndirectW) {
+        HMODULE g32 = GetModuleHandleW(L"GDI32.dll");
+        Real_CreateFontIndirectW = (PFN_CreateFontIndirectW)(void*)GetProcAddress(g32, "CreateFontIndirectW");
+    }
+    return Real_CreateFontIndirectW ? Real_CreateFontIndirectW(&lf) : NULL;
+}
+
 static int iat_hook(HMODULE mod, const char *dll, const char *func, void *hook, void **orig) {
     BYTE *base = (BYTE*)mod;
     IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER*)base; if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
@@ -537,6 +662,17 @@ static void install_ui_hooks(void) {
     ensure_cbt_hook();
 }
 
+static void install_gdi_hooks(void) {
+    HMODULE exe = GetModuleHandleW(NULL);
+    HMODULE g32 = GetModuleHandleW(L"GDI32.dll");
+    iat_hook(exe,"GDI32.dll","AddFontResourceExW",(void*)Hook_AddFontResourceExW,(void**)(void*)&Real_AddFontResourceExW);
+    iat_hook(exe,"GDI32.dll","CreateFontW",(void*)Hook_CreateFontW,(void**)(void*)&Real_CreateFontW);
+    iat_hook(exe,"GDI32.dll","CreateFontIndirectW",(void*)Hook_CreateFontIndirectW,(void**)(void*)&Real_CreateFontIndirectW);
+    if(!Real_AddFontResourceExW) Real_AddFontResourceExW=(PFN_AddFontResourceExW)(void*)GetProcAddress(g32,"AddFontResourceExW");
+    if(!Real_CreateFontW) Real_CreateFontW=(PFN_CreateFontW)(void*)GetProcAddress(g32,"CreateFontW");
+    if(!Real_CreateFontIndirectW) Real_CreateFontIndirectW=(PFN_CreateFontIndirectW)(void*)GetProcAddress(g32,"CreateFontIndirectW");
+}
+
 static void choose_language(void) {
     wchar_t test[MAX_PATH]; lstrcpyW(test,g_gameDir); lstrcatW(test,L"\\g00_jp");
     DWORD attr = GetFileAttributesW(test);
@@ -563,6 +699,10 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
         load_real();
         install_file_hooks();
         choose_language();
+        if (g_jp == 1) {
+            install_ui_hooks();
+            install_gdi_hooks();
+        }
     } else if (reason == DLL_PROCESS_DETACH) {
         if (g_cbtHook) {
             UnhookWindowsHookEx(g_cbtHook);
