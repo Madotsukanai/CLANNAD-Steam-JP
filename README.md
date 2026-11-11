@@ -43,24 +43,45 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 
 ## インストール手順
 
-### 1. プロキシDLLのビルド（必要な場合）
+リポジトリ全体をクローンする必要はありません。`curl` でスクリプト（`install_jp.py`）を取得して Python で実行するだけで、プロキシDLL、日本語フォント、日本語UI画像等の生成と配置がすべて自動で行われます。
+
+> [!NOTE]
+> UI画像の合成に `Pillow` を使用します。未インストールの場合はあらかじめ導入してください。
+> ```bash
+> pip install Pillow
+> ```
+
+### Windows の場合 (PowerShell / コマンドプロンプト)
+
+```powershell
+curl.exe -sLO https://github.com/Madotsukanai/CLANNAD-Steam-JP/raw/refs/heads/main/install_jp.py
+python install_jp.py
+```
+
+※ゲームのインストール先がデフォルトと異なる場合は、パスを引数に指定して実行してください：
+```powershell
+python install_jp.py "C:\Program Files (x86)\Steam\steamapps\common\CLANNAD"
+```
+
+### Linux の場合 (Proton / Steam Deck)
+
+```bash
+curl -sLO https://github.com/Madotsukanai/CLANNAD-Steam-JP/raw/refs/heads/main/install_jp.py
+python3 install_jp.py
+```
+
+※パスを指定して実行する場合：
+```bash
+python3 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
+```
+
+---
+
+### (開発者向け) プロキシDLLのソースビルド
+
 リポジトリ直下で `make` を実行すると `steam_api.dll` が生成されます。
 ```bash
 make
-```
-
-### 2. 日本語化の適用
-`install_jp.py` を実行します。引数を省略した場合、デフォルトのSteamインストールパスが自動検出されます。
-
-```bash
-# 自動検出でインストール
-python3 install_jp.py
-
-# パスを明示してインストールする場合（例: Windows）
-python install_jp.py "C:\Program Files (x86)\Steam\steamapps\common\CLANNAD"
-
-# パスを明示してインストールする場合（例: Linux）
-python3 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
 ```
 
 ---
