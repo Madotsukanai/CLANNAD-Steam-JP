@@ -331,22 +331,39 @@ PROXY_ASSET='steam_api.dll'
 FONT_URL='https://github.com/notofonts/noto-cjk/raw/refs/heads/main/Sans/Mono/NotoSansMonoCJKjp-Regular.otf'
 FONT_NAME='NotoSansMonoCJKjp-Regular.otf'
 
+def _pick_unit(n):
+    units=('B','KB','MB','GB')
+    v=float(n); u=0
+    while v>=1024 and u<len(units)-1:
+        v/=1024; u+=1
+    return units[u]
+
+def _fmt_size(n, unit):
+    units=('B','KB','MB','GB')
+    v=float(n)/(1024**units.index(unit))
+    if unit=='B':
+        return f'{int(v)} {unit}'
+    return f'{v:.1f} {unit}'
+
 def _download_to_file(url, dest, headers=None, min_size=0):
     req=urllib.request.Request(url, headers=headers or {'User-Agent':'clannad-jp-installer'})
     with urllib.request.urlopen(req) as r:
         total=r.getheader('Content-Length')
         try: total=int(total) if total else None
         except Exception: total=None
+        if total is not None and total <= 0:
+            total=None
         data=bytearray(); read=0; chunk=1024*64
         while True:
             b=r.read(chunk)
             if not b: break
             data.extend(b); read+=len(b)
+            u=_pick_unit(read or 1)
             if total:
-                pct=read*100//total
-                print(f'\r  {read/1048576:.1f}/{total/1048576:.1f} MB ({pct}%)', end='', flush=True)
+                pct=min(100, read*100//total)
+                print(f'\r  {_fmt_size(read,u)}/{_fmt_size(total,u)} ({pct}%)', end='', flush=True)
             else:
-                print(f'\r  {read/1048576:.1f} MB', end='', flush=True)
+                print(f'\r  {_fmt_size(read,u)}', end='', flush=True)
         print()
     if len(data) < min_size:
         raise RuntimeError('downloaded file too small')
