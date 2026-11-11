@@ -25,7 +25,7 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 
 ## 動作環境
 
-- **OS**: Linux (Proton / Steam Deck) または Windows
+- **OS**: Windows または Linux (Proton / Steam Deck)
 - **ゲーム**: Steam版『CLANNAD』
 - **Python**: 3.8 以上
   - 依存ライブラリ: `Pillow`（UI画像生成時に使用）
@@ -53,11 +53,11 @@ make
 # 自動検出でインストール
 python3 install_jp.py
 
-# パスを明示してインストールする場合（例: Linux）
-python3 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
-
 # パスを明示してインストールする場合（例: Windows）
 python install_jp.py "C:\Program Files (x86)\Steam\steamapps\common\CLANNAD"
+
+# パスを明示してインストールする場合（例: Linux）
+python3 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
 ```
 
 ---
