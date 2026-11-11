@@ -356,16 +356,18 @@ def _download_to_file(url, dest, headers=None, min_size=0):
         if total is not None and total <= 0:
             total=None
         data=bytearray(); read=0; chunk=1024*64
+        u=_pick_unit(total) if total else 'B'
         while True:
             b=r.read(chunk)
             if not b: break
             data.extend(b); read+=len(b)
-            u=_pick_unit(read or 1)
+            if not total: u=_pick_unit(read or 1)
             if total:
                 pct=min(100, read*100//total)
-                print(f'\r  {_fmt_size(read,u)}/{_fmt_size(total,u)} ({pct}%)', end='', flush=True)
+                msg=f'  {_fmt_size(read,u)}/{_fmt_size(total,u)} ({pct}%)'
             else:
-                print(f'\r  {_fmt_size(read,u)}', end='', flush=True)
+                msg=f'  {_fmt_size(read,u)}'
+            print(f'\r{msg:<60}', end='', flush=True)
         print()
     if len(data) < min_size:
         raise RuntimeError('downloaded file too small')
