@@ -2,6 +2,9 @@
 
 Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイするための日本語化ツールおよびプロキシDLLです。
 
+![CLANNAD Screenshot 1](https://madotsukanai.github.io/clannad.png)
+![CLANNAD Screenshot 2](https://madotsukanai.github.io/clannad2.png)
+
 ゲーム内に残存している日本語テキスト・リソースの復元、不足している日本語UI画像の生成、および実行時ファイルリダイレクト・UI動的翻訳を行う `steam_api.dll` プロキシを提供します。
 
 ---
