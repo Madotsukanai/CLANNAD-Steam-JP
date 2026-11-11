@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Standalone installer for JP localization (add-only overlay). No other project .py/source files used."""
 import argparse, json, os, re, shutil, struct, sys, tempfile, urllib.request
 from bisect import bisect_left
 from collections import Counter, defaultdict
@@ -16,16 +15,31 @@ else:
     DEFAULT_GAME = Path.home() / '.local/share/Steam/steamapps/common/CLANNAD'
 
 # -------------------- crypto / lzss / dbs / gameexe --------------------
-def _c1(buf, k):
-    b=bytearray(buf); k&=0xFF; n=len(b)
-    for i in range(n): b[i]^=k
-    for i in range(n-1): b[i]=(b[i]+b[i+1])&0xFF
+CLANNAD_KEY = bytes([0x3B,0x54,0xDC,0x74,0x2F,0xBA,0x0C,0xD6,0xAC,0x08,0xD2,0x23,0xEC,0x60,0xA9,0x2E])
+DBS_KEY = bytes([0x2D,0x62,0xF4,0x89]*4)
+
+def _crypt1_xor(buf, key):
+    b=bytearray(buf); klen=len(key)
+    for i in range(len(b)): b[i]^=key[i%klen]
     return bytes(b)
 
-def _c3(buf):
-    b=bytearray(buf); n=len(b)
-    for i in range(n-1,0,-1): b[i]=(b[i]+b[i-1])&0xFF
-    for i in range(n): b[i]^=0x58
+def _c2(buf, table):
+    b=bytearray(buf)
+    for i in range(len(b)): b[i]^=table[i%256]
+    return bytes(b)
+
+DECRYPT3_K0=(14,199,144,113)
+DECRYPT3_K1=(53,241,155,73)
+DECRYPT3_R=(0,1,1,0,0,0,1,1,0,0,0,1,1,0,0,0,1,1,0,0,1,1,1,0,0,1,1,1,0,0,1,1,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0,0,1,1,0,1,1,1,1,0,1,1,1,1,0,1,1,1,1,1,1,0,0,1,1,1,0,0,1,1,1,0,0,1)
+
+def _crypt3(buf):
+    b=bytearray(buf); kindex=0; rindex=0
+    for i in range(len(b)):
+        key=DECRYPT3_K1 if DECRYPT3_R[rindex] else DECRYPT3_K0
+        b[i]^=key[kindex]; kindex+=1
+        if kindex>3:
+            kindex=0; rindex+=1
+            if rindex>=len(DECRYPT3_R): rindex=0
     return bytes(b)
 
 def lzss_decompress(src, tolerant=True):
@@ -211,22 +225,30 @@ class Dbs:
 
 def decrypt_dbs(path):
     raw=Path(path).read_bytes(); is_utf = raw[:4]!=b'\x00\x00\x00\x00'
-    body=_c1(raw[4:], 0x63)
+    body=_crypt1_xor(raw[4:], DBS_KEY)
     comp,decomp=struct.unpack('II',body[:8])
     data=lzss_decompress(body[:8]+body[8:comp], tolerant=True)
-    return is_utf,_c3(data)
+    return is_utf,_crypt3(data)
 
 def encrypt_dbs(blob, is_utf=True):
-    data=lzss_compress_literals(_c3(blob))
-    full=_c1(data,0x63)
+    data=lzss_compress_literals(_crypt3(blob))
+    full=_crypt1_xor(data, DBS_KEY)
     return (b'\x01\x00\x00\x00' if is_utf else b'\x00\x00\x00\x00')+full
 
+DECRYPT2_T1=bytes([216,41,185,22,61,26,118,208,135,155,45,12,123,209,169,25,34,159,145,115,106,53,177,126,209,181,231,230,213,245,6,214,186,191,243,69,63,241,97,221,76,103,106,111,116,236,122,111,38,116,14,219,39,76,165,241,14,45,112,196,64,93,79,218,158,197,73,123,189,232,223,238,202,244,146,222,228,118,16,221,42,82,220,115,78,84,140,48,61,154,178,155,184,147,41,85,250,122,201,218,16,151,229,182,35,2,221,56,76,155,31,154,213,73,233,52,15,40,45,27,82,57,92,54,137,86,167,150,20,190,46,197,62,8,95,71,169,223,136,159,212,204,105,31,48,159,231,205,128,69,243,231,42,29,22,178,241,84,200,108,43,13,212,101,247,227,54,212,165,59,209,121,76,84,240,42,180,178,86,69,46,171,123,136,197,250,116,173,3,184,158,213,245,111,220,250,68,73,49,246,131,50,255,194,177,233,225,152,61,111,49,13,172,177,8,131,157,13,16,209,65,249,0,186,26,207,19,113,228,134,33,47,35,101,195,69,160,195,146,72,157,234,221,49,44,233,226,16,34,170,225,173,44,196,45,127])
+
 def gameexe_unpack(path):
-    d=Path(path).read_bytes(); d=_c1(d,0x34)
-    comp=struct.unpack('<I',d[0:4])[0]
-    return lzss_decompress(d[0:8]+d[8:comp], tolerant=True)
+    raw=Path(path).read_bytes()
+    data=_c2(raw[8:], DECRYPT2_T1)
+    data=_crypt1_xor(data, CLANNAD_KEY)
+    comp,decomp=struct.unpack('II', data[:8])
+    return lzss_decompress(data[:8]+data[8:comp], tolerant=True)
+
 def gameexe_pack(raw):
-    return _c1(lzss_compress_literals(raw),0x34)
+    body=lzss_compress_literals(raw)
+    data=_crypt1_xor(body, CLANNAD_KEY)
+    data=_c2(data, DECRYPT2_T1)
+    return b'\x00\x00\x00\x00\x01\x00\x00\x00' + data
 
 # -------------------- conversion logic --------------------
 KANA=re.compile(r'[\u3040-\u30ff]'); HAN=re.compile(r'[\u4e00-\u9fff]')
@@ -819,15 +841,36 @@ def apply_ui(game, font_path):
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('game', nargs='?', type=Path, default=DEFAULT_GAME, help='install directory')
+    ap.add_argument('--remove', action='store_true', help='remove JP localization and restore original files')
     a=ap.parse_args(); game=a.game
     assert (game/'SiglusEngine_Steam.exe').exists(), 'game not found'
+    if a.remove:
+        orig=game/'steam_api_original.dll'
+        proxy=game/'steam_api.dll'
+        if orig.exists():
+            atomic_write(proxy, orig.read_bytes())
+            try: orig.unlink()
+            except Exception: pass
+            print('[proxy] restored steam_api.dll')
+        elif not proxy.exists():
+            print('[proxy] not installed')
+        for f in [game/'GameexeJP.dat', game/'dat'/FONT_NAME]:
+            if f.exists():
+                f.unlink(); print(f'[remove] {f}')
+        for d in [game/'dat_jp', game/'g00_jp']:
+            if d.exists():
+                shutil.rmtree(d); print(f'[remove] {d}/')
+        print('[done] JP localization removed')
+        return
     assert (game/'GameexeZH.dat').exists(), 'GameexeZH.dat missing'
     (game/'g00_jp').mkdir(exist_ok=True); (game/'dat_jp').mkdir(exist_ok=True)
     # 1 Gameexe
     text=gameexe_unpack(game/'GameexeZH.dat').decode('utf-16-le')
     newt=convert_gameexe_text(text)
     packed=gameexe_pack(newt.encode('utf-16-le'))
-    dec=lzss_decompress(_c1(packed,0x34), tolerant=True)
+    dec_data=_crypt1_xor(_c2(packed[8:], DECRYPT2_T1), CLANNAD_KEY)
+    comp,_decomp=struct.unpack('II', dec_data[:8])
+    dec=lzss_decompress(dec_data[:8]+dec_data[8:comp], tolerant=True)
     assert dec.decode('utf-16-le','strict')==newt
     atomic_write(game/'GameexeJP.dat', packed)
     print('[GameexeJP.dat] written' if newt!=text else '[GameexeJP.dat] unchanged')
