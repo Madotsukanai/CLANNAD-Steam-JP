@@ -291,14 +291,22 @@ def convert_gameexe_text(text):
 
 def convert_dbs(path):
     name=Path(path).name
-    is_utf,blob=decrypt_dbs(path); d=Dbs(blob,is_utf)
-    JP,CN,STR=0,2,0x53
-    lang_target = (name.startswith('text') and name.endswith('.dbs')) or name == 'config_table.dbs'
+    lang_target = (name.startswith('text') and name.endswith('.dbs')) or name in ('config_table.dbs','cgmodetbl.dbs','config_parts.dbs','name_replace.dbs')
     if not lang_target: return None,0,0
+    is_utf,blob=decrypt_dbs(path); d=Dbs(blob,is_utf)
+    changed=warn=0
+    if name=='name_replace.dbs':
+        # patch準拠: 列2(置換先プレースホルダ)を列0(表示名)に合わせて日本語化
+        for r,row in enumerate(d.rows):
+            if len(row)>2 and isinstance(row[0],str) and isinstance(row[2],str) and row[2]!=row[0]:
+                row[2]=row[0]; changed+=1
+        if changed==0: return None,0,0
+        out=encrypt_dbs(d.to_blob(), is_utf)
+        return out,changed,0
+    JP,CN,STR=0,2,0x53
     if JP not in d.data_index or CN not in d.data_index: return None,0,0
     c0=d.data_index.index(JP); c2=d.data_index.index(CN)
     if d.data_type[c0]!=STR or d.data_type[c2]!=STR: return None,0,0
-    changed=warn=0
     for r,row in enumerate(d.rows):
         if row[c0]=='' and row[c2]!='':
             ov=OVERRIDES.get((name,r+1))
@@ -350,15 +358,10 @@ def ensure_proxy(game):
             raise RuntimeError('steam_api.dll not found in game folder')
         shutil.copy2(dst, orig)
         print('[proxy] backup steam_api.dll -> steam_api_original.dll')
-    local=Path(__file__).resolve().parent/PROXY_ASSET
-    if local.exists():
-        data=local.read_bytes()
-        print(f'[proxy] using local {local}')
-    else:
-        with tempfile.TemporaryDirectory() as td:
-            tmp=Path(td)/PROXY_ASSET
-            download_latest_proxy(tmp)
-            data=tmp.read_bytes()
+    with tempfile.TemporaryDirectory() as td:
+        tmp=Path(td)/PROXY_ASSET
+        download_latest_proxy(tmp)
+        data=tmp.read_bytes()
     atomic_write(dst, data)
     print(f'[proxy] installed {dst}')
 
@@ -393,6 +396,7 @@ def ensure_font(game):
     return fpath
 
 # -------------------- g00 UI rendering (integrated from make_jp_ui.py) --------------------
+
 UI_SPEC = {
 "files": [
 {"name":"_system_config_ZH","items":[{"box":[10,8,130,32],"text":"環境設定","size":16,"align":"center"}]},
