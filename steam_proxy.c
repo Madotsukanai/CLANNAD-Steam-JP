@@ -111,8 +111,16 @@ static int wstreq(const wchar_t *a, const wchar_t *b) { return a && b && lstrcmp
 
 static int has_arg(const char *name) {
     const char *cmd = GetCommandLineA();
-    if (!cmd) return 0;
-    return stristr(cmd, name) != NULL;
+    if (cmd && stristr(cmd, name)) return 1;
+    char env[64];
+    DWORD n = GetEnvironmentVariableA("clannad_lang", env, sizeof(env));
+    if (n == 0 || n >= sizeof(env)) n = GetEnvironmentVariableA("CLANNAD_LANG", env, sizeof(env));
+    if (n == 0 || n >= sizeof(env)) return 0;
+    if (lstrcmpiA(name, "clannad_lang=jp") == 0 || lstrcmpiA(name, "--clannad-jp") == 0 || lstrcmpiA(name, "-clannad_jp") == 0)
+        return lstrcmpiA(env, "jp") == 0;
+    if (lstrcmpiA(name, "clannad_lang=cn") == 0 || lstrcmpiA(name, "--clannad-cn") == 0 || lstrcmpiA(name, "-clannad_cn") == 0)
+        return lstrcmpiA(env, "cn") == 0;
+    return 0;
 }
 
 typedef struct { const wchar_t *cn; const wchar_t *jp; } StrMap;

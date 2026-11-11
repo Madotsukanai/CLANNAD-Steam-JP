@@ -331,6 +331,27 @@ PROXY_ASSET='steam_api.dll'
 FONT_URL='https://github.com/notofonts/noto-cjk/raw/refs/heads/main/Sans/Mono/NotoSansMonoCJKjp-Regular.otf'
 FONT_NAME='NotoSansMonoCJKjp-Regular.otf'
 
+def _download_to_file(url, dest, headers=None, min_size=0):
+    req=urllib.request.Request(url, headers=headers or {'User-Agent':'clannad-jp-installer'})
+    with urllib.request.urlopen(req) as r:
+        total=r.getheader('Content-Length')
+        try: total=int(total) if total else None
+        except Exception: total=None
+        data=bytearray(); read=0; chunk=1024*64
+        while True:
+            b=r.read(chunk)
+            if not b: break
+            data.extend(b); read+=len(b)
+            if total:
+                pct=read*100//total
+                print(f'\r  {read/1048576:.1f}/{total/1048576:.1f} MB ({pct}%)', end='', flush=True)
+            else:
+                print(f'\r  {read/1048576:.1f} MB', end='', flush=True)
+        print()
+    if len(data) < min_size:
+        raise RuntimeError('downloaded file too small')
+    atomic_write(dest, bytes(data))
+
 def download_latest_proxy(dest):
     api=f'https://api.github.com/repos/{PROXY_REPO}/releases/latest'
     req=urllib.request.Request(api, headers={'User-Agent':'clannad-jp-installer','Accept':'application/vnd.github+json'})
@@ -344,12 +365,7 @@ def download_latest_proxy(dest):
         raise RuntimeError(f'{PROXY_ASSET} not found in latest release of {PROXY_REPO}')
     tag=rel.get('tag_name','?')
     print(f'[proxy] latest {PROXY_REPO} {tag} -> {PROXY_ASSET}')
-    req=urllib.request.Request(url, headers={'User-Agent':'clannad-jp-installer'})
-    with urllib.request.urlopen(req) as r:
-        data=r.read()
-    if len(data) < 1024:
-        raise RuntimeError('downloaded proxy too small')
-    atomic_write(dest, data)
+    _download_to_file(url, dest, headers={'User-Agent':'clannad-jp-installer'}, min_size=1024)
 
 def ensure_proxy(game):
     orig=game/'steam_api_original.dll'; dst=game/'steam_api.dll'
@@ -367,12 +383,7 @@ def ensure_proxy(game):
 
 def download_font(dest):
     print(f'[font] downloading {FONT_NAME}')
-    req=urllib.request.Request(FONT_URL, headers={'User-Agent':'clannad-jp-installer'})
-    with urllib.request.urlopen(req) as r:
-        data=r.read()
-    if len(data) < 1024*1024:
-        raise RuntimeError('downloaded font too small')
-    atomic_write(dest, data)
+    _download_to_file(FONT_URL, dest, headers={'User-Agent':'clannad-jp-installer'}, min_size=1024*1024)
 
 _font_path_cache=None
 def ensure_font(game):
@@ -488,6 +499,7 @@ UI_SPEC = {
 {"name":"_system_vo_sonota_ZH","items":[{"style":"vo","box":[96,10,158,50],"text":"その他","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
 {"name":"_system_vo_botan_ZH","items":[{"style":"vo","box":[96,10,158,50],"text":"ボタン","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
 {"name":"_system_vo_kotomi_ZH","items":[{"style":"vo","box":[96,10,158,50],"text":"ことみ","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
+{"name":"_system_vo_naouyuki_ZH","items":[{"style":"vo","box":[96,10,158,50],"text":"直幸","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
 {"name":"_system_smenu_04_ZH","items":[{"box":[20,8,450,42],"text":"町、時の流れ、人","size":20,"align":"center","maxw":430}]},
 {"name":"_system_smenu_06_ZH","items":[{"box":[20,8,450,42],"text":"渚〜坂の下の別れ","size":20,"align":"center","maxw":430}]},
 {"name":"_system_smenu_07_ZH","items":[{"box":[20,8,450,42],"text":"それは風のように","size":20,"align":"center","maxw":430}]},
