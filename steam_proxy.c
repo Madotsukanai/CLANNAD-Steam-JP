@@ -461,8 +461,8 @@ static int rewrite_w(LPCWSTR in, wchar_t *out, size_t cap) {
         lstrcpynW(out, in, (int)pre + 1); lstrcatW(out, suf);
         return file_exists_w(out) ? 1 : 0;
     }
-    const wchar_t *froms[] = { L"\\g00\\", L"/g00\\", L"\\g00/", L"/g00/", L"\\dat\\", L"/dat\\", L"\\dat/", L"/dat/", NULL };
-    const wchar_t *tos[]   = { L"\\g00_jp\\", L"/g00_jp\\", L"\\g00_jp/", L"/g00_jp/", L"\\dat_jp\\", L"/dat_jp\\", L"\\dat_jp/", L"/dat_jp/", NULL };
+    const wchar_t *froms[] = { L"\\g00\\", L"/g00\\", L"\\g00/", L"/g00/", L"\\dat\\", L"/dat\\", L"\\dat/", L"/dat/", L"\\mov\\", L"/mov\\", L"\\mov/", L"/mov/", NULL };
+    const wchar_t *tos[]   = { L"\\g00_jp\\", L"/g00_jp\\", L"\\g00_jp/", L"/g00_jp/", L"\\dat_jp\\", L"/dat_jp\\", L"\\dat_jp/", L"/dat_jp/", L"\\mov_jp\\", L"/mov_jp\\", L"\\mov_jp/", L"/mov_jp/", NULL };
     for (int i = 0; froms[i]; i++) {
         wchar_t *p = wcsistr(in, froms[i]); if (!p) continue;
         size_t pre = (size_t)(p - in), fl = lstrlenW(froms[i]), rest = lstrlenW(p + fl);
@@ -490,8 +490,8 @@ static int rewrite_a(LPCSTR in, char *out, size_t cap) {
         wchar_t w[MAX_PATH*2]; MultiByteToWideChar(CP_ACP,0,out,-1,w,MAX_PATH*2);
         return file_exists_w(w) ? 1 : 0;
     }
-    const char *froms[] = { "\\g00\\", "/g00\\", "\\g00/", "/g00/", "\\dat\\", "/dat\\", "\\dat/", "/dat/", NULL };
-    const char *tos[]   = { "\\g00_jp\\", "/g00_jp\\", "\\g00_jp/", "/g00_jp/", "\\dat_jp\\", "/dat_jp\\", "\\dat_jp/", "/dat_jp/", NULL };
+    const char *froms[] = { "\\g00\\", "/g00\\", "\\g00/", "/g00/", "\\dat\\", "/dat\\", "\\dat/", "/dat/", "\\mov\\", "/mov\\", "\\mov/", "/mov/", NULL };
+    const char *tos[]   = { "\\g00_jp\\", "/g00_jp\\", "\\g00_jp/", "/g00_jp/", "\\dat_jp\\", "/dat_jp\\", "\\dat_jp/", "/dat_jp/", "\\mov_jp\\", "/mov_jp\\", "\\mov_jp/", "/mov_jp/", NULL };
     for (int i = 0; froms[i]; i++) {
         char *p = stristr(in, froms[i]); if (!p) continue;
         size_t pre = (size_t)(p - in), fl = lstrlenA(froms[i]), rest = lstrlenA(p + fl);
@@ -681,7 +681,7 @@ static void choose_language(void) {
     if (has_arg("clannad_lang=cn") || has_arg("--clannad-cn") || has_arg("-clannad_cn")) { g_jp = 0; return; }
     int r = MessageBoxW(NULL,
         L"CLANNAD をどちらで起動しますか？\n\n"
-        L"「はい」: 日本語版 (g00_jp / dat_jp)\n"
+        L"「はい」: 日本語版 (g00_jp / dat_jp / mov_jp)\n"
         L"「いいえ」: 中国語版 (元のまま)\n"
         L"「キャンセル」: 起動しない",
         L"CLANNAD 起動選択",

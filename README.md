@@ -31,10 +31,15 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 - **OS**: Windows または Linux (Proton)
 - **ゲーム**: Steam版『CLANNAD』（中国語版）
 - **Python**: 3.8 以上
-  - 依存ライブラリ: `Pillow`（UI画像生成時に使用）
+  - `Pillow`（UI画像生成に必要）
     ```bash
     pip install Pillow
     ```
+  - `yt-dlp` と `ffmpeg`（オープニングムービーの置換に必要。省略可）
+    ```bash
+    pip install yt-dlp imageio-ffmpeg
+    ```
+    `imageio-ffmpeg` の代わりに、`ffmpeg` を PATH にインストールしても使用できます。
 - **ビルドツール**（`steam_api.dll` をソースからビルドする場合）:
   - `make`
   - `i686-w64-mingw32-gcc` (MinGW-w64 32bit)
@@ -48,6 +53,12 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 > ```bash
 > pip install Pillow
 > ```
+>
+> オープニングムービーも日本語版に置き換える場合は、追加で `yt-dlp` と `ffmpeg` が必要です。
+> ```bash
+> pip install yt-dlp imageio-ffmpeg
+> ```
+> `imageio-ffmpeg` を使わず、システムにインストールした `ffmpeg` を PATH に通しても構いません。`yt-dlp` は Python パッケージまたは `yt-dlp` コマンドのどちらでも認識されます。
 
 ### Windows の場合 (PowerShell / コマンドプロンプト)
 
@@ -72,6 +83,10 @@ python3 install_jp.py
 ```bash
 python3 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
 ```
+
+### オープニングムービーについて
+
+`install_jp.py` は `yt-dlp` でオープニングムービーを取得し、`ffmpeg` でゲーム用の WMV に変換して `mov_jp/` に配置します。`yt-dlp` または `ffmpeg` が見つからない場合はムービーの置換だけをスキップし、それ以外の日本語化は続行します。`mov_jp/OP00.wmv` と `mov_jp/OP00_HIGH.wmv` が両方存在する場合も、再取得・変換をスキップします。
 
 ---
 

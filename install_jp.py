@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, atexit, json, os, re, shutil, struct, sys, tempfile, urllib.request
+import argparse, atexit, json, os, re, shutil, struct, subprocess, sys, tempfile, urllib.request
 from bisect import bisect_left
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -445,6 +445,149 @@ def ensure_font(game):
     _font_path_cache=fpath
     print(f'[font] installed {FONT_NAME}')
     return fpath
+
+# -------------------- movie (OP) replacement --------------------
+OP_YOUTUBE_URL = 'https://www.youtube.com/watch?v=tCV7yyImQFk'
+
+def _find_ffmpeg():
+    """Find ffmpeg binary: prefer imageio_ffmpeg package, fall back to PATH."""
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        pass
+    return shutil.which('ffmpeg')
+
+def _find_ffprobe():
+    """Find ffprobe binary: check next to imageio_ffmpeg's ffmpeg, then PATH."""
+    try:
+        import imageio_ffmpeg
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+        candidate = Path(ffmpeg_path).parent / ('ffprobe' + ('.exe' if sys.platform == 'win32' else ''))
+        if candidate.is_file():
+            return str(candidate)
+    except ImportError:
+        pass
+    return shutil.which('ffprobe')
+
+def _download_youtube(url, output_path):
+    """Download video: prefer yt_dlp library, fall back to yt-dlp CLI."""
+    # Try Python library first
+    try:
+        import yt_dlp
+        ydl_opts = {
+            'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
+            'merge_output_format': 'mkv',
+            'outtmpl': str(output_path),
+            'quiet': False,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        return True
+    except ImportError:
+        pass
+    # Fall back to CLI
+    yt_dlp_bin = shutil.which('yt-dlp')
+    if not yt_dlp_bin:
+        return None  # not available at all
+    r = subprocess.run([yt_dlp_bin,
+                        '-f', 'bestvideo[height<=720]+bestaudio/best[height<=720]',
+                        '--merge-output-format', 'mkv',
+                        '-o', str(output_path), url])
+    return r.returncode == 0
+
+def _has_ytdlp():
+    """Check if yt-dlp is available (library or CLI)."""
+    try:
+        import yt_dlp  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    return shutil.which('yt-dlp') is not None
+
+def ensure_movie(game):
+    """Download OP movie from YouTube and convert to WMV for mov_jp/."""
+    mov_jp = game / 'mov_jp'
+    op00 = mov_jp / 'OP00.wmv'
+    op00_high = mov_jp / 'OP00_HIGH.wmv'
+    if op00.exists() and op00_high.exists():
+        print('[mov] OP00.wmv / OP00_HIGH.wmv already exist, skipping')
+        return
+    # --- check tools ---
+    has_yt = _has_ytdlp()
+    ffmpeg = _find_ffmpeg()
+    if not has_yt or not ffmpeg:
+        missing = []
+        if not has_yt: missing.append('yt-dlp')
+        if not ffmpeg: missing.append('ffmpeg')
+        print(f'[mov] WARNING: {", ".join(missing)} not found, skipping OP movie replacement')
+        if not has_yt:
+            print('[mov]   pip install yt-dlp')
+        if not ffmpeg:
+            print('[mov]   pip install imageio-ffmpeg  (or install ffmpeg to PATH)')
+        return
+    mov_jp.mkdir(exist_ok=True)
+    # --- get original resolution for reference ---
+    orig_mov = game / 'mov' / 'OP00.wmv'
+    orig_w, orig_h = 1280, 960  # defaults matching Steam CLANNAD
+    ffprobe = _find_ffprobe()
+    if orig_mov.exists() and ffprobe:
+        try:
+            probe = subprocess.run(
+                [ffprobe,
+                 '-v', 'error', '-select_streams', 'v:0',
+                 '-show_entries', 'stream=width,height', '-of', 'csv=p=0',
+                 str(orig_mov)],
+                capture_output=True, text=True, timeout=10)
+            if probe.returncode == 0 and ',' in probe.stdout.strip():
+                parts = probe.stdout.strip().split(',')
+                orig_w, orig_h = int(parts[0]), int(parts[1])
+        except Exception:
+            pass
+    # --- download from YouTube ---
+    tmp_dl = mov_jp / '.dl_tmp.mkv'
+    if not tmp_dl.exists():
+        print('[mov] downloading OP movie from YouTube...')
+        result = _download_youtube(OP_YOUTUBE_URL, tmp_dl)
+        if not result:
+            print('[mov] WARNING: download failed')
+            if tmp_dl.exists(): tmp_dl.unlink()
+            if mov_jp.exists() and not any(mov_jp.iterdir()):
+                mov_jp.rmdir()
+            return
+    # --- convert to WMV (standard + high quality) ---
+    vf = f'scale={orig_w}:{orig_h}:force_original_aspect_ratio=decrease,pad={orig_w}:{orig_h}:(ow-iw)/2:(oh-ih)/2'
+    for out_path, vbitrate, label in [
+        (op00, '5000k', 'OP00.wmv'),
+        (op00_high, '8000k', 'OP00_HIGH.wmv'),
+    ]:
+        if out_path.exists():
+            continue
+        print(f'[mov] converting to {label} (vbr={vbitrate})...')
+        tmp_out = out_path.with_suffix('.tmp.wmv')
+        enc_cmd = [ffmpeg, '-y', '-i', str(tmp_dl),
+                   '-vf', vf,
+                   '-c:v', 'wmv2', '-b:v', vbitrate,
+                   '-c:a', 'wmav2', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+                   '-r', '29.97',
+                   '-f', 'asf',
+                   str(tmp_out)]
+        r = subprocess.run(enc_cmd)
+        if r.returncode != 0:
+            print(f'[mov] WARNING: ffmpeg conversion failed for {label}')
+            if tmp_out.exists(): tmp_out.unlink()
+            continue
+        tmp_out.rename(out_path)
+        print(f'[mov] {label} -> {out_path} ({out_path.stat().st_size/(1024*1024):.1f} MB)')
+    # --- cleanup temp download ---
+    if tmp_dl.exists():
+        tmp_dl.unlink()
+    # If either WMV is missing, remove mov_jp/ so proxy falls back to mov/
+    if not op00.exists() or not op00_high.exists():
+        print('[mov] WARNING: conversion incomplete, removing mov_jp/ to fall back to original')
+        shutil.rmtree(mov_jp, ignore_errors=True)
+        return
+    print('[mov] done')
 
 # -------------------- g00 UI rendering (integrated from make_jp_ui.py) --------------------
 
@@ -911,7 +1054,7 @@ def main():
         for f in [game/'GameexeJP.dat', game/'dat'/FONT_NAME]:
             if f.exists():
                 f.unlink(); print(f'[remove] {f}')
-        for d in [game/'dat_jp', game/'g00_jp']:
+        for d in [game/'dat_jp', game/'g00_jp', game/'mov_jp']:
             if d.exists():
                 shutil.rmtree(d); print(f'[remove] {d}/')
         print('[done] JP localization removed')
@@ -956,6 +1099,11 @@ def main():
         apply_ui(game, font_path)
     except Exception as e:
         print(f'[ui] WARNING: UI localization failed: {e}')
+    # 3c OP movie (YouTube -> WMV)
+    try:
+        ensure_movie(game)
+    except Exception as e:
+        print(f'[mov] WARNING: OP movie processing failed: {e}')
     # 4 steam_api proxy
     ensure_proxy(game)
     print('done')
