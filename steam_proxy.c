@@ -73,6 +73,7 @@ typedef HANDLE (WINAPI *PFN_FindFirstFileA)(LPCSTR,LPWIN32_FIND_DATAA);
 typedef BOOL   (WINAPI *PFN_SetWindowTextW)(HWND,LPCWSTR);
 typedef BOOL   (WINAPI *PFN_SetDlgItemTextW)(HWND,int,LPCWSTR);
 typedef int    (WINAPI *PFN_GetWindowTextW)(HWND,LPWSTR,int);
+typedef int    (WINAPI *PFN_MessageBoxW)(HWND,LPCWSTR,LPCWSTR,UINT);
 typedef INT_PTR (WINAPI *PFN_DialogBoxIndirectParamW)(HINSTANCE,LPCDLGTEMPLATEW,HWND,DLGPROC,LPARAM);
 typedef INT_PTR (WINAPI *PFN_DialogBoxParamW)(HINSTANCE,LPCWSTR,HWND,DLGPROC,LPARAM);
 typedef HWND (WINAPI *PFN_CreateDialogIndirectParamW)(HINSTANCE,LPCDLGTEMPLATEW,HWND,DLGPROC,LPARAM);
@@ -88,6 +89,7 @@ static PFN_FindFirstFileA       Real_FindFirstFileA;
 static PFN_SetWindowTextW       Real_SetWindowTextW;
 static PFN_SetDlgItemTextW      Real_SetDlgItemTextW;
 static PFN_GetWindowTextW       Real_GetWindowTextW;
+static PFN_MessageBoxW          Real_MessageBoxW;
 static PFN_DialogBoxIndirectParamW Real_DialogBoxIndirectParamW;
 static PFN_DialogBoxParamW      Real_DialogBoxParamW;
 static PFN_CreateDialogIndirectParamW Real_CreateDialogIndirectParamW;
@@ -208,8 +210,17 @@ static const StrMap kStrMap[] = {
     { L"取消", L"キャンセル" },
     { L"关闭", L"閉じる" },
     { L"關閉", L"閉じる" },
+    { L"是(&Y)", L"はい(&Y)" },
+    { L"否(&N)", L"いいえ(&N)" },
+    { L"非(&N)", L"いいえ(&N)" },
+    { L"是(Y)", L"はい(Y)" },
+    { L"否(N)", L"いいえ(N)" },
+    { L"非(N)", L"いいえ(N)" },
+    { L"&Yes", L"はい(&Y)" },
+    { L"&No", L"いいえ(&N)" },
     { L"是", L"はい" },
     { L"否", L"いいえ" },
+    { L"非", L"いいえ" },
     { L"画面设置", L"画面設定" },
     { L"畫面設置", L"画面設定" },
     { L"画面模式", L"画面モード" },
@@ -340,6 +351,12 @@ static void ensure_cbt_hook(void) {
             g_cbtHook = SetWindowsHookExW(WH_CBT, CbtFilterHook, NULL, GetCurrentThreadId());
         }
     }
+}
+
+int WINAPI Hook_MessageBoxW(HWND h, LPCWSTR text, LPCWSTR cap, UINT t) {
+    ensure_cbt_hook();
+    if (!Real_MessageBoxW) return MessageBoxW(h, translate_w(text), translate_w(cap), t);
+    return Real_MessageBoxW(h, translate_w(text), translate_w(cap), t);
 }
 
 INT_PTR WINAPI Hook_DialogBoxIndirectParamW(HINSTANCE instance, LPCDLGTEMPLATEW templ, HWND parent, DLGPROC proc, LPARAM param) {
@@ -504,6 +521,7 @@ static void install_ui_hooks(void) {
     HMODULE u32 = GetModuleHandleW(L"USER32.dll");
     iat_hook(exe,"USER32.dll","SetWindowTextW",(void*)Hook_SetWindowTextW,(void**)(void*)&Real_SetWindowTextW);
     iat_hook(exe,"USER32.dll","SetDlgItemTextW",(void*)Hook_SetDlgItemTextW,(void**)(void*)&Real_SetDlgItemTextW);
+    iat_hook(exe,"USER32.dll","MessageBoxW",(void*)Hook_MessageBoxW,(void**)(void*)&Real_MessageBoxW);
     iat_hook(exe,"USER32.dll","DialogBoxIndirectParamW",(void*)Hook_DialogBoxIndirectParamW,(void**)(void*)&Real_DialogBoxIndirectParamW);
     iat_hook(exe,"USER32.dll","DialogBoxParamW",(void*)Hook_DialogBoxParamW,(void**)(void*)&Real_DialogBoxParamW);
     iat_hook(exe,"USER32.dll","CreateDialogIndirectParamW",(void*)Hook_CreateDialogIndirectParamW,(void**)(void*)&Real_CreateDialogIndirectParamW);
@@ -511,6 +529,7 @@ static void install_ui_hooks(void) {
     if(!Real_SetWindowTextW) Real_SetWindowTextW=(PFN_SetWindowTextW)(void*)GetProcAddress(u32,"SetWindowTextW");
     if(!Real_SetDlgItemTextW) Real_SetDlgItemTextW=(PFN_SetDlgItemTextW)(void*)GetProcAddress(u32,"SetDlgItemTextW");
     if(!Real_GetWindowTextW) Real_GetWindowTextW=(PFN_GetWindowTextW)(void*)GetProcAddress(u32,"GetWindowTextW");
+    if(!Real_MessageBoxW) Real_MessageBoxW=(PFN_MessageBoxW)(void*)GetProcAddress(u32,"MessageBoxW");
     if(!Real_DialogBoxIndirectParamW) Real_DialogBoxIndirectParamW=(PFN_DialogBoxIndirectParamW)(void*)GetProcAddress(u32,"DialogBoxIndirectParamW");
     if(!Real_DialogBoxParamW) Real_DialogBoxParamW=(PFN_DialogBoxParamW)(void*)GetProcAddress(u32,"DialogBoxParamW");
     if(!Real_CreateDialogIndirectParamW) Real_CreateDialogIndirectParamW=(PFN_CreateDialogIndirectParamW)(void*)GetProcAddress(u32,"CreateDialogIndirectParamW");

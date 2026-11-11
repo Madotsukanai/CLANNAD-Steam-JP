@@ -1,4 +1,4 @@
-# CLANNAD Steam版 日本語化パッチ
+# CLANNAD-Steam-JP
 
 Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイするための日本語化ツールおよびプロキシDLLです。
 
