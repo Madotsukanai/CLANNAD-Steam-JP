@@ -229,9 +229,18 @@ HANDLE WINAPI Hook_FindFirstFileA(LPCSTR n,LPWIN32_FIND_DATAA d){
     char buf[MAX_PATH*2]; if (rewrite_a(n,buf,MAX_PATH*2)) n=buf; return Real_FindFirstFileA(n,d);
 }
 
-BOOL WINAPI Hook_SetWindowTextW(HWND h,LPCWSTR s){ return Real_SetWindowTextW(h, translate_w(s)); }
-BOOL WINAPI Hook_SetDlgItemTextW(HWND h,int id,LPCWSTR s){ return Real_SetDlgItemTextW(h,id, translate_w(s)); }
-int WINAPI Hook_MessageBoxW(HWND h,LPCWSTR text,LPCWSTR cap,UINT t){ return Real_MessageBoxW(h, translate_w(text), translate_w(cap), t); }
+BOOL WINAPI Hook_SetWindowTextW(HWND h,LPCWSTR s){
+    if (!Real_SetWindowTextW) return 0;
+    return Real_SetWindowTextW(h, translate_w(s));
+}
+BOOL WINAPI Hook_SetDlgItemTextW(HWND h,int id,LPCWSTR s){
+    if (!Real_SetDlgItemTextW) return 0;
+    return Real_SetDlgItemTextW(h,id, translate_w(s));
+}
+int WINAPI Hook_MessageBoxW(HWND h,LPCWSTR text,LPCWSTR cap,UINT t){
+    if (!Real_MessageBoxW) return MessageBoxW(h, translate_w(text), translate_w(cap), t);
+    return Real_MessageBoxW(h, translate_w(text), translate_w(cap), t);
+}
 
 static int iat_hook(HMODULE mod, const char *dll, const char *func, void *hook, void **orig) {
     BYTE *base = (BYTE*)mod;
@@ -253,7 +262,7 @@ static int iat_hook(HMODULE mod, const char *dll, const char *func, void *hook, 
     } return 0;
 }
 
-static void install_hooks(void) {
+static void install_file_hooks(void) {
     HMODULE exe = GetModuleHandleW(NULL);
     iat_hook(exe,"KERNEL32.dll","CreateFileW",(void*)Hook_CreateFileW,(void**)&Real_CreateFileW);
     iat_hook(exe,"KERNEL32.dll","CreateFileA",(void*)Hook_CreateFileA,(void**)&Real_CreateFileA);
@@ -262,11 +271,7 @@ static void install_hooks(void) {
     iat_hook(exe,"KERNEL32.dll","GetFileAttributesExW",(void*)Hook_GetFileAttributesExW,(void**)&Real_GetFileAttributesExW);
     iat_hook(exe,"KERNEL32.dll","FindFirstFileW",(void*)Hook_FindFirstFileW,(void**)&Real_FindFirstFileW);
     iat_hook(exe,"KERNEL32.dll","FindFirstFileA",(void*)Hook_FindFirstFileA,(void**)&Real_FindFirstFileA);
-    iat_hook(exe,"USER32.dll","SetWindowTextW",(void*)Hook_SetWindowTextW,(void**)&Real_SetWindowTextW);
-    iat_hook(exe,"USER32.dll","SetDlgItemTextW",(void*)Hook_SetDlgItemTextW,(void**)&Real_SetDlgItemTextW);
-    iat_hook(exe,"USER32.dll","MessageBoxW",(void*)Hook_MessageBoxW,(void**)&Real_MessageBoxW);
     HMODULE k32 = GetModuleHandleW(L"KERNEL32.dll");
-    HMODULE u32 = GetModuleHandleW(L"USER32.dll");
     if(!Real_CreateFileW) Real_CreateFileW=(PFN_CreateFileW)GetProcAddress(k32,"CreateFileW");
     if(!Real_CreateFileA) Real_CreateFileA=(PFN_CreateFileA)GetProcAddress(k32,"CreateFileA");
     if(!Real_GetFileAttributesW) Real_GetFileAttributesW=(PFN_GetFileAttributesW)GetProcAddress(k32,"GetFileAttributesW");
@@ -274,6 +279,14 @@ static void install_hooks(void) {
     if(!Real_GetFileAttributesExW) Real_GetFileAttributesExW=(PFN_GetFileAttributesExW)GetProcAddress(k32,"GetFileAttributesExW");
     if(!Real_FindFirstFileW) Real_FindFirstFileW=(PFN_FindFirstFileW)GetProcAddress(k32,"FindFirstFileW");
     if(!Real_FindFirstFileA) Real_FindFirstFileA=(PFN_FindFirstFileA)GetProcAddress(k32,"FindFirstFileA");
+}
+
+static void install_ui_hooks(void) {
+    HMODULE exe = GetModuleHandleW(NULL);
+    HMODULE u32 = GetModuleHandleW(L"USER32.dll");
+    iat_hook(exe,"USER32.dll","SetWindowTextW",(void*)Hook_SetWindowTextW,(void**)&Real_SetWindowTextW);
+    iat_hook(exe,"USER32.dll","SetDlgItemTextW",(void*)Hook_SetDlgItemTextW,(void**)&Real_SetDlgItemTextW);
+    iat_hook(exe,"USER32.dll","MessageBoxW",(void*)Hook_MessageBoxW,(void**)&Real_MessageBoxW);
     if(!Real_SetWindowTextW) Real_SetWindowTextW=(PFN_SetWindowTextW)GetProcAddress(u32,"SetWindowTextW");
     if(!Real_SetDlgItemTextW) Real_SetDlgItemTextW=(PFN_SetDlgItemTextW)GetProcAddress(u32,"SetDlgItemTextW");
     if(!Real_MessageBoxW) Real_MessageBoxW=(PFN_MessageBoxW)GetProcAddress(u32,"MessageBoxW");
@@ -299,7 +312,10 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hinst);
         GetModuleFileNameW(NULL, g_gameDir, MAX_PATH); PathRemoveFileSpecW(g_gameDir);
-        load_real(); install_hooks(); choose_language();
+        load_real();
+        install_file_hooks();
+        choose_language();
+        if (g_jp == 1) install_ui_hooks();
     }
     return TRUE;
 }
