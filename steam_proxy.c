@@ -30,9 +30,9 @@ typedef DWORD  (WINAPI *PFN_GetFileAttributesA)(LPCSTR);
 typedef BOOL   (WINAPI *PFN_GetFileAttributesExW)(LPCWSTR,GET_FILEEX_INFO_LEVELS,LPVOID);
 typedef HANDLE (WINAPI *PFN_FindFirstFileW)(LPCWSTR,LPWIN32_FIND_DATAW);
 typedef HANDLE (WINAPI *PFN_FindFirstFileA)(LPCSTR,LPWIN32_FIND_DATAA);
-typedef BOOL   (WINAPI *PFN_SetWindowTextW)(HWND,LPCWSTR);
-typedef BOOL   (WINAPI *PFN_SetDlgItemTextW)(HWND,int,LPCWSTR);
-typedef int    (WINAPI *PFN_MessageBoxW)(HWND,LPCWSTR,LPCWSTR,UINT);
+typedef BOOL    (WINAPI *PFN_SetWindowTextW)(HWND,LPCWSTR);
+typedef BOOL    (WINAPI *PFN_SetDlgItemTextW)(HWND,int,LPCWSTR);
+typedef LRESULT (WINAPI *PFN_SendMessageW)(HWND,UINT,WPARAM,LPARAM);
 
 static PFN_CreateFileW          Real_CreateFileW;
 static PFN_CreateFileA          Real_CreateFileA;
@@ -43,7 +43,7 @@ static PFN_FindFirstFileW       Real_FindFirstFileW;
 static PFN_FindFirstFileA       Real_FindFirstFileA;
 static PFN_SetWindowTextW       Real_SetWindowTextW;
 static PFN_SetDlgItemTextW      Real_SetDlgItemTextW;
-static PFN_MessageBoxW          Real_MessageBoxW;
+static PFN_SendMessageW         Real_SendMessageW;
 
 static int file_exists_w(LPCWSTR path) { return Real_GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES; }
 
@@ -237,9 +237,10 @@ BOOL WINAPI Hook_SetDlgItemTextW(HWND h,int id,LPCWSTR s){
     if (!Real_SetDlgItemTextW) return 0;
     return Real_SetDlgItemTextW(h,id, translate_w(s));
 }
-int WINAPI Hook_MessageBoxW(HWND h,LPCWSTR text,LPCWSTR cap,UINT t){
-    if (!Real_MessageBoxW) return MessageBoxW(h, translate_w(text), translate_w(cap), t);
-    return Real_MessageBoxW(h, translate_w(text), translate_w(cap), t);
+LRESULT WINAPI Hook_SendMessageW(HWND h,UINT msg,WPARAM w,LPARAM l){
+    if (!Real_SendMessageW) return 0;
+    if (msg == WM_SETTEXT) return Real_SendMessageW(h,msg,w,(LPARAM)translate_w((LPCWSTR)l));
+    return Real_SendMessageW(h,msg,w,l);
 }
 
 static int iat_hook(HMODULE mod, const char *dll, const char *func, void *hook, void **orig) {
@@ -286,10 +287,10 @@ static void install_ui_hooks(void) {
     HMODULE u32 = GetModuleHandleW(L"USER32.dll");
     iat_hook(exe,"USER32.dll","SetWindowTextW",(void*)Hook_SetWindowTextW,(void**)&Real_SetWindowTextW);
     iat_hook(exe,"USER32.dll","SetDlgItemTextW",(void*)Hook_SetDlgItemTextW,(void**)&Real_SetDlgItemTextW);
-    iat_hook(exe,"USER32.dll","MessageBoxW",(void*)Hook_MessageBoxW,(void**)&Real_MessageBoxW);
+    iat_hook(exe,"USER32.dll","SendMessageW",(void*)Hook_SendMessageW,(void**)&Real_SendMessageW);
     if(!Real_SetWindowTextW) Real_SetWindowTextW=(PFN_SetWindowTextW)GetProcAddress(u32,"SetWindowTextW");
     if(!Real_SetDlgItemTextW) Real_SetDlgItemTextW=(PFN_SetDlgItemTextW)GetProcAddress(u32,"SetDlgItemTextW");
-    if(!Real_MessageBoxW) Real_MessageBoxW=(PFN_MessageBoxW)GetProcAddress(u32,"MessageBoxW");
+    if(!Real_SendMessageW) Real_SendMessageW=(PFN_SendMessageW)GetProcAddress(u32,"SendMessageW");
 }
 
 static void choose_language(void) {
