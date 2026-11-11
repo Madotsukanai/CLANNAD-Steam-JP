@@ -4,7 +4,9 @@
 
 HMODULE hReal = NULL;
 FARPROC p[8];
+FARPROC p_real[8];
 static volatile LONG g_jp = -1; /* -1: 未選択, 0: CN, 1: JP */
+static volatile LONG g_ui_hooks = 0;
 static wchar_t g_gameDir[MAX_PATH];
 
 static const char *names[8] = {
@@ -13,6 +15,30 @@ static const char *names[8] = {
     "SteamAPI_Init", "SteamAPI_UnregisterCallback",
 };
 
+typedef void* (__cdecl *PFN_SteamInternal_CreateInterface)(const char*, int*);
+typedef int   (__cdecl *PFN_SteamAPI_GetHSteamPipe)(void);
+typedef int   (__cdecl *PFN_SteamAPI_GetHSteamUser)(void);
+typedef void  (__cdecl *PFN_SteamAPI_RunCallbacks)(void);
+typedef void  (__cdecl *PFN_SteamAPI_RegisterCallback)(void*, int);
+typedef void  (__cdecl *PFN_SteamAPI_Shutdown)(void);
+typedef int   (__cdecl *PFN_SteamAPI_Init)(void);
+typedef void  (__cdecl *PFN_SteamAPI_UnregisterCallback)(void*, int);
+
+static void install_ui_hooks(void);
+
+void* __cdecl wrap_SteamInternal_CreateInterface(const char* a, int* b){ return ((PFN_SteamInternal_CreateInterface)p_real[0])(a,b); }
+int   __cdecl wrap_SteamAPI_GetHSteamPipe(void){ return ((PFN_SteamAPI_GetHSteamPipe)p_real[1])(); }
+int   __cdecl wrap_SteamAPI_GetHSteamUser(void){ return ((PFN_SteamAPI_GetHSteamUser)p_real[2])(); }
+void  __cdecl wrap_SteamAPI_RunCallbacks(void){ ((PFN_SteamAPI_RunCallbacks)p_real[3])(); }
+void  __cdecl wrap_SteamAPI_RegisterCallback(void* a, int b){ ((PFN_SteamAPI_RegisterCallback)p_real[4])(a,b); }
+void  __cdecl wrap_SteamAPI_Shutdown(void){ ((PFN_SteamAPI_Shutdown)p_real[5])(); }
+int   __cdecl wrap_SteamAPI_Init(void){
+    int r = ((PFN_SteamAPI_Init)p_real[6])();
+    if (g_jp == 1 && InterlockedCompareExchange(&g_ui_hooks, 1, 0) == 0) install_ui_hooks();
+    return r;
+}
+void  __cdecl wrap_SteamAPI_UnregisterCallback(void* a, int b){ ((PFN_SteamAPI_UnregisterCallback)p_real[7])(a,b); }
+
 static void load_real(void) {
     if (hReal) return;
     wchar_t path[MAX_PATH];
@@ -20,7 +46,15 @@ static void load_real(void) {
     lstrcatW(path, L"\\steam_api_original.dll");
     hReal = LoadLibraryW(path);
     if (!hReal) return;
-    for (int i = 0; i < 8; i++) p[i] = GetProcAddress(hReal, names[i]);
+    for (int i = 0; i < 8; i++) p_real[i] = GetProcAddress(hReal, names[i]);
+    p[0]=(FARPROC)wrap_SteamInternal_CreateInterface;
+    p[1]=(FARPROC)wrap_SteamAPI_GetHSteamPipe;
+    p[2]=(FARPROC)wrap_SteamAPI_GetHSteamUser;
+    p[3]=(FARPROC)wrap_SteamAPI_RunCallbacks;
+    p[4]=(FARPROC)wrap_SteamAPI_RegisterCallback;
+    p[5]=(FARPROC)wrap_SteamAPI_Shutdown;
+    p[6]=(FARPROC)wrap_SteamAPI_Init;
+    p[7]=(FARPROC)wrap_SteamAPI_UnregisterCallback;
 }
 
 typedef HANDLE (WINAPI *PFN_CreateFileW)(LPCWSTR,DWORD,DWORD,LPSECURITY_ATTRIBUTES,DWORD,DWORD,HANDLE);
@@ -30,9 +64,8 @@ typedef DWORD  (WINAPI *PFN_GetFileAttributesA)(LPCSTR);
 typedef BOOL   (WINAPI *PFN_GetFileAttributesExW)(LPCWSTR,GET_FILEEX_INFO_LEVELS,LPVOID);
 typedef HANDLE (WINAPI *PFN_FindFirstFileW)(LPCWSTR,LPWIN32_FIND_DATAW);
 typedef HANDLE (WINAPI *PFN_FindFirstFileA)(LPCSTR,LPWIN32_FIND_DATAA);
-typedef BOOL    (WINAPI *PFN_SetWindowTextW)(HWND,LPCWSTR);
-typedef BOOL    (WINAPI *PFN_SetDlgItemTextW)(HWND,int,LPCWSTR);
-typedef LRESULT (WINAPI *PFN_SendMessageW)(HWND,UINT,WPARAM,LPARAM);
+typedef BOOL   (WINAPI *PFN_SetWindowTextW)(HWND,LPCWSTR);
+typedef BOOL   (WINAPI *PFN_SetDlgItemTextW)(HWND,int,LPCWSTR);
 
 static PFN_CreateFileW          Real_CreateFileW;
 static PFN_CreateFileA          Real_CreateFileA;
@@ -43,7 +76,6 @@ static PFN_FindFirstFileW       Real_FindFirstFileW;
 static PFN_FindFirstFileA       Real_FindFirstFileA;
 static PFN_SetWindowTextW       Real_SetWindowTextW;
 static PFN_SetDlgItemTextW      Real_SetDlgItemTextW;
-static PFN_SendMessageW         Real_SendMessageW;
 
 static int file_exists_w(LPCWSTR path) { return Real_GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES; }
 
@@ -77,21 +109,24 @@ static char *stristr(const char *hay, const char *needle) {
 }
 static int wstreq(const wchar_t *a, const wchar_t *b) { return a && b && lstrcmpW(a,b)==0; }
 
+static int has_arg(const char *name) {
+    const char *cmd = GetCommandLineA();
+    if (!cmd) return 0;
+    return stristr(cmd, name) != NULL;
+}
+
 typedef struct { const wchar_t *cn; const wchar_t *jp; } StrMap;
 static const StrMap kStrMap[] = {
-    /* font dialog / exe embedded */
     { L"要更改字体吗？\n\n※若选择“否”，将不会显示文字。", L"フォントを変更しますか？\n\n※「いいえ」を選択すると、文字は表示されません。" },
     { L"未发现字体。（或字体已损坏。）\n\n\u3000\u3000现在的字体：", L"フォントが見つかりません。（またはフォントが破損しています。）\n\n\u3000\u3000現在のフォント：" },
     { L"现在的字体：", L"現在のフォント：" },
     { L"字体：", L"フォント：" },
     { L"字体设置", L"フォント設定" },
-    /* common dialogs/buttons */
     { L"确定", L"OK" },
     { L"取消", L"キャンセル" },
     { L"关闭", L"閉じる" },
     { L"是", L"はい" },
     { L"否", L"いいえ" },
-    /* settings/menu UI in exe */
     { L"画面设置", L"画面設定" },
     { L"画面模式", L"画面モード" },
     { L"全屏幕", L"フルスクリーン" },
@@ -109,8 +144,6 @@ static const StrMap kStrMap[] = {
     { L"匹配上下画面", L"上下に合わせる" },
     { L"匹配左右画面", L"左右に合わせる" },
     { L"自定义设置", L"カスタム設定" },
-    { L"上下倍率 : ", L"上下倍率 : " },
-    { L"左右倍率 : ", L"左右倍率 : " },
     { L"同步倍率", L"倍率を同期" },
     { L"上下移动 : ", L"上下移動 : " },
     { L"左右移动 : ", L"左右移動 : " },
@@ -126,8 +159,6 @@ static const StrMap kStrMap[] = {
     { L"缩短播放时间（快进声音）", L"再生時間短縮（音声早送り）" },
     { L"缩短播放时间（快进声音）设置", L"再生時間短縮（音声早送り）設定" },
     { L"标准", L"標準" },
-    { L"2倍速", L"2倍速" },
-    { L"3倍速", L"3倍速" },
     { L"更改正常阅读文本的播放速度", L"通常のテキスト再生速度を変更" },
     { L"更改自动模式时的播放速度", L"オートモード時の再生速度を変更" },
     { L"更改重播声音时的播放速度", L"音声リプレイ時の再生速度を変更" },
@@ -237,11 +268,6 @@ BOOL WINAPI Hook_SetDlgItemTextW(HWND h,int id,LPCWSTR s){
     if (!Real_SetDlgItemTextW) return 0;
     return Real_SetDlgItemTextW(h,id, translate_w(s));
 }
-LRESULT WINAPI Hook_SendMessageW(HWND h,UINT msg,WPARAM w,LPARAM l){
-    if (!Real_SendMessageW) return 0;
-    if (msg == WM_SETTEXT) return Real_SendMessageW(h,msg,w,(LPARAM)translate_w((LPCWSTR)l));
-    return Real_SendMessageW(h,msg,w,l);
-}
 
 static int iat_hook(HMODULE mod, const char *dll, const char *func, void *hook, void **orig) {
     BYTE *base = (BYTE*)mod;
@@ -287,16 +313,16 @@ static void install_ui_hooks(void) {
     HMODULE u32 = GetModuleHandleW(L"USER32.dll");
     iat_hook(exe,"USER32.dll","SetWindowTextW",(void*)Hook_SetWindowTextW,(void**)&Real_SetWindowTextW);
     iat_hook(exe,"USER32.dll","SetDlgItemTextW",(void*)Hook_SetDlgItemTextW,(void**)&Real_SetDlgItemTextW);
-    iat_hook(exe,"USER32.dll","SendMessageW",(void*)Hook_SendMessageW,(void**)&Real_SendMessageW);
     if(!Real_SetWindowTextW) Real_SetWindowTextW=(PFN_SetWindowTextW)GetProcAddress(u32,"SetWindowTextW");
     if(!Real_SetDlgItemTextW) Real_SetDlgItemTextW=(PFN_SetDlgItemTextW)GetProcAddress(u32,"SetDlgItemTextW");
-    if(!Real_SendMessageW) Real_SendMessageW=(PFN_SendMessageW)GetProcAddress(u32,"SendMessageW");
 }
 
 static void choose_language(void) {
     wchar_t test[MAX_PATH]; lstrcpyW(test,g_gameDir); lstrcatW(test,L"\\g00_jp");
     DWORD attr = GetFileAttributesW(test);
     if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) { g_jp = 0; return; }
+    if (has_arg("clannad_lang=jp") || has_arg("--clannad-jp") || has_arg("-clannad_jp")) { g_jp = 1; return; }
+    if (has_arg("clannad_lang=cn") || has_arg("--clannad-cn") || has_arg("-clannad_cn")) { g_jp = 0; return; }
     int r = MessageBoxW(NULL,
         L"CLANNAD をどちらで起動しますか？\n\n"
         L"「はい」: 日本語版 (g00_jp / dat_jp)\n"
@@ -316,7 +342,6 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
         load_real();
         install_file_hooks();
         choose_language();
-        if (g_jp == 1) install_ui_hooks();
     }
     return TRUE;
 }
