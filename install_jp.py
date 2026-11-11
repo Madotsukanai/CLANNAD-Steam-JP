@@ -305,6 +305,13 @@ def convert_dbs(path):
         if changed==0: return None,0,0
         out=encrypt_dbs(d.to_blob(), is_utf)
         return out,changed,0
+    if name=='config_parts.dbs':
+        # フルスクリーンのトグルスイッチ(行6)を少し左に移動 (x: 312 -> 287)
+        if len(d.rows)>6 and d.rows[6][0]=='_SYSTEM_RADIO_BUTTON' and d.rows[6][1]==312:
+            d.rows[6][1]=287; changed+=1
+        if changed==0: return None,0,0
+        out=encrypt_dbs(d.to_blob(), is_utf)
+        return out,changed,0
     JP,CN,STR=0,2,0x53
     if JP not in d.data_index or CN not in d.data_index: return None,0,0
     c0=d.data_index.index(JP); c2=d.data_index.index(CN)
@@ -395,6 +402,11 @@ def ensure_proxy(game):
             raise RuntimeError('steam_api.dll not found in game folder')
         shutil.copy2(dst, orig)
         print('[proxy] backup steam_api.dll -> steam_api_original.dll')
+    local_proxy = Path(__file__).resolve().parent / 'steam_api.dll'
+    if local_proxy.exists():
+        shutil.copy2(local_proxy, dst)
+        print(f'[proxy] installed local {local_proxy} -> {dst}')
+        return
     with tempfile.TemporaryDirectory() as td:
         tmp=Path(td)/PROXY_ASSET
         download_latest_proxy(tmp)
@@ -409,6 +421,16 @@ def download_font(dest):
 _font_path_cache=None
 def ensure_font(game):
     global _font_path_cache
+    for d in [game/'dat_jp', game/'dat']:
+        existing = d/FONT_NAME
+        if existing.exists() and existing.stat().st_size > 1024*1024:
+            fdir = Path(tempfile.mkdtemp(prefix='clannad_font_'))
+            atexit.register(shutil.rmtree, fdir, True)
+            fpath = fdir/FONT_NAME
+            shutil.copy2(existing, fpath)
+            _font_path_cache = fpath
+            print(f'[font] using existing {existing}')
+            return fpath
     with tempfile.TemporaryDirectory() as td:
         tmp=Path(td)/FONT_NAME
         download_font(tmp)
@@ -438,7 +460,7 @@ UI_SPEC = {
  {"box":[667,123,770,146],"text":"その他の設定","size":20,"maxw":140},
  {"box":[667,553,770,577],"text":"背景色","size":20,"maxw":140},
  {"box":[168,168,236,198],"text":"ウィンドウ","size":20,"maxw":150},
- {"box":[328,168,424,198],"text":"フルスクリーン","size":20,"maxw":250},
+ {"box":[328,168,450,198],"text":"フルスクリーン","size":20,"maxw":250,"dx":-25},
  {"box":[168,296,236,326],"text":"遅い","size":20},
  {"box":[328,296,386,326],"text":"速い","size":20},
  {"box":[488,296,596,326],"text":"ウェイトなし","size":20,"maxw":115},
@@ -827,8 +849,6 @@ def process_ui_file(ent, game, out_dir, fpath, log):
     if not src.exists():
         log(f'  [ui] {name}: source missing'); return False
     dst=out_dir/(name+'.g00')
-    if dst.exists() and dst.read_bytes()!=src.read_bytes():
-        return True # already localized
     try:
         obj=load_g00(src.read_bytes())
     except Exception as e:
