@@ -46,24 +46,24 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 
 ```powershell
 curl.exe -sLO https://github.com/Madotsukanai/CLANNAD-Steam-JP/raw/refs/heads/main/install_jp.py
-py -3.11 install_jp.py
+python install_jp.py
 ```
 
 ※ゲームのインストール先がデフォルトと異なる場合は、パスを引数に指定して実行してください：
 ```powershell
-py -3.11 install_jp.py "C:\Program Files (x86)\Steam\steamapps\common\CLANNAD"
+python install_jp.py "C:\Program Files (x86)\Steam\steamapps\common\CLANNAD"
 ```
 
 ### Linux の場合 (Proton / Steam Deck)
 
 ```bash
 curl -sLO https://github.com/Madotsukanai/CLANNAD-Steam-JP/raw/refs/heads/main/install_jp.py
-python3.11 install_jp.py
+python3 install_jp.py
 ```
 
 ※パスを指定して実行する場合：
 ```bash
-python3.11 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
+python3 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
 ```
 
 ### オープニングムービーについて
