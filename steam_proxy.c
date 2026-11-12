@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <stdio.h>
 #include <shlwapi.h>
 
 static HINSTANCE g_hInst = NULL;
@@ -102,6 +103,7 @@ static PFN_CreateFontW          Real_CreateFontW;
 static PFN_CreateFontIndirectW  Real_CreateFontIndirectW;
 
 static void translate_dialog_and_children(HWND hwnd);
+static void fit_dialog_layout(HWND hwnd);
 
 static int file_exists_w(LPCWSTR path) { return Real_GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES; }
 
@@ -259,7 +261,7 @@ static const StrMap kStrMap[] = {
     { L"关于分辨率", L"解像度について" },
     { L"關於解析度", L"解像度について" },
     { L"原尺寸", L"原寸" },
-    { L"匹配全屏幕", L"フルスクリーンに合わせる" },
+    { L"匹配全屏幕", L"画面全体に拡大" },
     { L"匹配上下画面", L"上下に合わせる" },
     { L"匹配左右画面", L"左右に合わせる" },
     { L"自定义设置", L"カスタム設定" },
@@ -296,14 +298,70 @@ static const StrMap kStrMap[] = {
     { L"声音模式设定", L"音声モード設定" },
     { L"角色语音设定", L"キャラクターボイス設定" },
     { L"BGM淡出设置", L"BGMフェードアウト設定" },
+    { L"（当前分辨率）", L"（現在の解像度）" },
+    { L"（原分辨率）", L"（元の解像度）" },
+    { L"将更改画面分辨率。\n\n<注意>\n因分辨率不同，可能会出现画面闪烁的状况。\n更改分辨率后，如果画面仍未正常显示，请耐心等待。\n20 秒后将会恢复到原来的设置状态。\n\n<有关液晶显示器的说明>\n更改分辨率时，可能会出现黑屏现象。\n这种情况是由于显示器无法正常收到信号，切换到无信号状态后导致的。\n重启显示器电源后即可正常显示。",
+      L"画面の解像度を変更します。\n\n<注意>\n解像度の違いにより、画面がちらつくことがあります。\n解像度変更後、画面が正常に表示されない場合は、しばらくお待ちください。\n20秒後に元の設定に戻ります。\n\n<液晶ディスプレイに関する説明>\n解像度の変更時、画面が真っ黒になることがあります。\nこれはディスプレイが正常に信号を受信できず、ノー信号状態に切り替わるために起こるものです。\nディスプレイの電源を入れ直せば正常に表示されます。" },
     { NULL, NULL }
 };
+
+/* "…prefix…<数値> × <数値>…" のように数値を挟む文字列を照合・読み取る */
+static int scan_int_after(const wchar_t **ps, const wchar_t *lit, int *out) {
+    const wchar_t *s = *ps;
+    size_t n = lstrlenW(lit);
+    if (wcsncmp(s, lit, n) != 0) return 0;
+    s += n;
+    while (*s == L' ') s++;
+    if (*s < L'0' || *s > L'9') return 0;
+    int v = 0;
+    while (*s >= L'0' && *s <= L'9') { v = v * 10 + (*s - L'0'); s++; }
+    *ps = s;
+    *out = v;
+    return 1;
+}
+
+static const wchar_t *translate_resolution_msg(const wchar_t *s) {
+    static __thread wchar_t buf[1024];
+    const wchar_t *p = s;
+    int w = 0, h = 0, sec = 0;
+    /* 本作品的最佳匹配分辨率为 %d × %d。… */
+    if (scan_int_after(&p, L"本作品的最佳匹配分辨率为 ", &w) &&
+        scan_int_after(&p, L" × ", &h) &&
+        wcsncmp(p, L"。", 1) == 0) {
+        _snwprintf(buf, 1024,
+            L"本作品の最適解像度は %d × %d です。\n\n"
+            L"可能であれば、%d × %d の解像度に設定してください。\n"
+            L"設定できない場合は、最適解像度に近い画面比率を選択してください。\n\n"
+            L"<液晶ディスプレイに関する補足>\n"
+            L"最適解像度に設定しても、表示がぼやけたり粗くなったりすることがあります。\n"
+            L"また、横長・縦長に表示されることがあります。\n"
+            L"これはディスプレイの性能によるものであり、あらかじめご了承ください。\n",
+            w, h, w, h);
+        buf[1023] = 0;
+        return buf;
+    }
+    /* 分辨率已更改。\n%d 秒后将恢复原本的分辨率。 */
+    p = s;
+    if (wcsncmp(p, L"分辨率已更改。\n", 8) == 0) {
+        p += 8;
+        if (scan_int_after(&p, L"", &sec) && wcsstr(p, L"秒后将恢复原本的分辨率")) {
+            _snwprintf(buf, 1024, L"解像度を変更しました。\n%d秒後に元の解像度に戻ります。", sec);
+            buf[1023] = 0;
+            return buf;
+        }
+    }
+    return NULL;
+}
 
 static const wchar_t *translate_w(const wchar_t *s) {
     static __thread wchar_t buf[1024];
     if (g_jp != 1 || !s) return s;
     for (int i = 0; kStrMap[i].cn; i++) {
         if (wstreq(s, kStrMap[i].cn)) return kStrMap[i].jp;
+    }
+    {
+        const wchar_t *dyn = translate_resolution_msg(s);
+        if (dyn) return dyn;
     }
     {
         const wchar_t *pfx = L"现在的字体：";
@@ -344,8 +402,13 @@ static BOOL CALLBACK translate_child_text(HWND hwnd, LPARAM unused) {
 
 static void translate_dialog_and_children(HWND hwnd) {
     if (InterlockedCompareExchange(&g_in_translate, 1, 0) != 0) return;
+    wchar_t dlgTitle[128];
+    int needFit = 0;
+    if (Real_GetWindowTextW && Real_GetWindowTextW(hwnd, dlgTitle, 128))
+        needFit = (wstreq(dlgTitle, L"画面设置") || wstreq(dlgTitle, L"畫面設置"));
     translate_window_text(hwnd);
     EnumChildWindows(hwnd, translate_child_text, 0);
+    if (needFit) fit_dialog_layout(hwnd);
 
     HWND hYes = GetDlgItem(hwnd, IDYES);
     if (hYes) {
@@ -393,6 +456,106 @@ static void translate_dialog_and_children(HWND hwnd) {
     }
 
     InterlockedExchange(&g_in_translate, 0);
+}
+
+/* ===== 日本語化時のダイアログ自動レイアウト調整 ===== */
+
+static int cls_is(HWND h, const wchar_t *name) {
+    wchar_t c[40]; return GetClassNameW(h, c, 40) && lstrcmpiW(c, name) == 0;
+}
+static LONG style_of(HWND h) { return (LONG)GetWindowLongPtrW(h, GWL_STYLE); }
+static int is_groupbox(HWND h) {
+    return cls_is(h, L"Button") && (style_of(h) & BS_TYPEMASK) == BS_GROUPBOX;
+}
+static int vband_overlap(const RECT *a, const RECT *b) {
+    long t = a->top > b->top ? a->top : b->top;
+    long btm = a->bottom < b->bottom ? a->bottom : b->bottom;
+    long ha = a->bottom - a->top, hb = b->bottom - b->top;
+    long mh = ha < hb ? ha : hb;
+    return (btm - t) * 2 > mh;
+}
+static void rect_to_client(HWND parent, HWND child, RECT *r) {
+    GetWindowRect(child, r);
+    POINT tl = { r->left, r->top }, br = { r->right, r->bottom };
+    ScreenToClient(parent, &tl); ScreenToClient(parent, &br);
+    r->left = tl.x; r->top = tl.y; r->right = br.x; r->bottom = br.y;
+}
+/* コントロールのテキストが収まる最低幅（px）を測定 */
+static int min_width_for(HWND ctrl) {
+    wchar_t t[512];
+    if (!Real_GetWindowTextW || !Real_GetWindowTextW(ctrl, t, 512) || !t[0]) return 0;
+    HDC dc = GetDC(ctrl); if (!dc) return 0;
+    HFONT f = (HFONT)SendMessageW(ctrl, WM_GETFONT, 0, 0), old = NULL;
+    if (f) old = (HFONT)SelectObject(dc, f);
+    SIZE sz = {0, 0};
+    GetTextExtentPoint32W(dc, t, lstrlenW(t), &sz);
+    if (old) SelectObject(dc, old);
+    ReleaseDC(ctrl, dc);
+    int pad;
+    if (cls_is(ctrl, L"Button")) pad = is_groupbox(ctrl) ? 24 : 24;
+    else if (cls_is(ctrl, L"ComboBox")) pad = 28;
+    else if (cls_is(ctrl, L"Static")) pad = 4;
+    else if (cls_is(ctrl, L"Edit")) pad = 8;
+    else return 0;
+    int need = sz.cx + pad;
+    return need < 16 ? 16 : need;
+}
+static BOOL CALLBACK fit_collect(HWND h, LPARAM lp) {
+    struct { HWND *a; int n; } *ctx = (void*)lp;
+    if (ctx->n < 128 && IsWindowVisible(h)) ctx->a[ctx->n++] = h;
+    return TRUE;
+}
+static void fit_dialog_layout(HWND hwnd) {
+    HWND kids[128]; int n = 0;
+    struct { HWND *a; int n; } ctx = { kids, 0 };
+    EnumChildWindows(hwnd, fit_collect, (LPARAM)&ctx);
+    if (!n) return;
+    /* 左から順に処理 */
+    for (int ii = 0; ii < n - 1; ii++)
+        for (int jj = 0; jj < n - 1 - ii; jj++) {
+            RECT a, b; rect_to_client(hwnd, kids[jj], &a); rect_to_client(hwnd, kids[jj+1], &b);
+            if (a.left > b.left) { HWND t = kids[jj]; kids[jj] = kids[jj+1]; kids[jj+1] = t; }
+        }
+    for (int i = 0; i < n; i++) {
+        HWND ci = kids[i];
+        RECT ri; rect_to_client(hwnd, ci, &ri);
+        int curw = ri.right - ri.left, curh = ri.bottom - ri.top;
+        int need = min_width_for(ci);
+        if (need == 0 || need <= curw) continue;
+        int delta = need - curw;
+        MoveWindow(ci, ri.left, ri.top, need, curh, TRUE);
+        /* 囲むグループボックスを追従拡張 */
+        for (int j = 0; j < n; j++) {
+            if (j == i || !is_groupbox(kids[j])) continue;
+            RECT rj; rect_to_client(hwnd, kids[j], &rj);
+            if (rj.left <= ri.left - 2 && rj.top <= ri.top && rj.bottom >= ri.bottom &&
+                rj.right < ri.left + need + 6) {
+                MoveWindow(kids[j], rj.left, rj.top, (ri.left + need + 6) - rj.left,
+                           rj.bottom - rj.top, TRUE);
+            }
+        }
+        /* 縦帯が重なり右に隣接する兄弟を右へずらす */
+        int cut = ri.left + curw - 4, lim = ri.left + need + 10;
+        for (int j = 0; j < n; j++) {
+            if (j == i || is_groupbox(kids[j])) continue;
+            RECT rj; rect_to_client(hwnd, kids[j], &rj);
+            if (rj.left >= cut && rj.left < lim && vband_overlap(&ri, &rj))
+                MoveWindow(kids[j], rj.left + delta, rj.top,
+                           rj.right - rj.left, rj.bottom - rj.top, TRUE);
+        }
+    }
+    /* 親ダイアログが足りなければ拡幅 */
+    RECT pr; GetClientRect(hwnd, &pr);
+    int maxr = 0;
+    for (int j = 0; j < n; j++) {
+        RECT rj; rect_to_client(hwnd, kids[j], &rj);
+        if (rj.right > maxr) maxr = rj.right;
+    }
+    if (maxr > pr.right - 8) {
+        RECT wr; GetWindowRect(hwnd, &wr);
+        MoveWindow(hwnd, wr.left, wr.top, (wr.right - wr.left) + (maxr - (pr.right - 8)),
+                   wr.bottom - wr.top, TRUE);
+    }
 }
 
 static LRESULT CALLBACK CbtFilterHook(int nCode, WPARAM wParam, LPARAM lParam) {

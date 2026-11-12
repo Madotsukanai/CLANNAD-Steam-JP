@@ -633,7 +633,7 @@ def download_latest_proxy(dest):
         raise RuntimeError(f'{PROXY_ASSET} has no valid SHA-256 digest in latest release of {PROXY_REPO}')
     tag=rel.get('tag_name','?')
     print(f'[proxy] latest {PROXY_REPO} {tag} -> {PROXY_ASSET}')
-    _download_to_file(url, dest, headers={'User-Agent':'clannad-jp-installer'}, min_size=1024, expected_sha256=match.group(1))
+    _download_to_file(url, dest, headers={'User-Agent':'clannad-jp-installer'}, expected_sha256=match.group(1))
     print('[proxy] SHA-256 verified')
 
 def ensure_proxy(game):
