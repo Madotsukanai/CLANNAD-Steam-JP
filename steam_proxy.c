@@ -408,10 +408,7 @@ static LRESULT CALLBACK CbtFilterHook(int nCode, WPARAM wParam, LPARAM lParam) {
 
 static void ensure_cbt_hook(void) {
     if (!g_cbtHook && g_jp == 1) {
-        g_cbtHook = SetWindowsHookExW(WH_CBT, CbtFilterHook, g_hInst, 0);
-        if (!g_cbtHook) {
-            g_cbtHook = SetWindowsHookExW(WH_CBT, CbtFilterHook, NULL, GetCurrentThreadId());
-        }
+        g_cbtHook = SetWindowsHookExW(WH_CBT, CbtFilterHook, g_hInst, GetCurrentThreadId());
     }
 }
 
@@ -716,6 +713,7 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
         choose_language();
         if (g_jp == 1) {
             install_ui_hooks();
+            InterlockedExchange(&g_ui_hooks, 1);
             install_gdi_hooks();
         }
     } else if (reason == DLL_PROCESS_DETACH) {
