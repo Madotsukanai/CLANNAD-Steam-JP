@@ -67,8 +67,6 @@ python3 install_jp.py
 python3 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
 ```
 
----
-
 ### (開発者向け) プロキシDLLのソースビルド
 
 リポジトリ直下で `make` を実行すると `steam_api.dll` が生成されます。
