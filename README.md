@@ -30,16 +30,20 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 
 - **OS**: Windows または Linux (Proton)
 - **ゲーム**: Steam版『CLANNAD』（中国語版）
-- **Python**: 3.8 以上
+- **Python**: 3.11 以上
   - `Pillow`（UI画像生成に必要）
     ```bash
-    pip install Pillow
+    python -m pip install Pillow
     ```
-  - `yt-dlp` と `ffmpeg`（オープニングムービーの置換に必要。省略可）
+  - オープニングムービーの置換には `yt-dlp` と JavaScript ランタイムも必要です。`yt-dlp[default]` にはYouTubeのJSチャレンジ用コンポーネントが含まれます。
     ```bash
-    pip install yt-dlp imageio-ffmpeg
+    # Windows
+    py -3.11 -m pip install --upgrade "yt-dlp[default]" imageio-ffmpeg
+
+    # Linux
+    python3.11 -m pip install --upgrade "yt-dlp[default]" imageio-ffmpeg
     ```
-    `imageio-ffmpeg` の代わりに、`ffmpeg` を PATH にインストールしても使用できます。
+    さらに [Deno 2.3.0 以上](https://docs.deno.com/runtime/getting_started/installation/)をインストールして PATH に追加してください。`imageio-ffmpeg` の代わりに、システムの `ffmpeg` を PATH にインストールしても使用できます。
 - **ビルドツール**（`steam_api.dll` をソースからビルドする場合）:
   - `make`
   - `i686-w64-mingw32-gcc` (MinGW-w64 32bit)
@@ -51,42 +55,46 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 > [!NOTE]
 > UI画像の合成に `Pillow` を使用します。未インストールの場合はあらかじめ導入してください。
 > ```bash
-> pip install Pillow
+> python -m pip install Pillow
 > ```
 >
-> オープニングムービーも日本語版に置き換える場合は、追加で `yt-dlp` と `ffmpeg` が必要です。
+> オープニングムービーも日本語版に置き換える場合は、追加で `yt-dlp[default]`、Deno 2.3.0 以上、および `ffmpeg` が必要です。
 > ```bash
-> pip install yt-dlp imageio-ffmpeg
+> # Windows
+> py -3.11 -m pip install --upgrade "yt-dlp[default]" imageio-ffmpeg
+>
+> # Linux
+> python3.11 -m pip install --upgrade "yt-dlp[default]" imageio-ffmpeg
 > ```
-> `imageio-ffmpeg` を使わず、システムにインストールした `ffmpeg` を PATH に通しても構いません。`yt-dlp` は Python パッケージまたは `yt-dlp` コマンドのどちらでも認識されます。
+> Deno は[公式手順](https://docs.deno.com/runtime/getting_started/installation/)でインストールし、PATH に追加してください。`imageio-ffmpeg` を使わず、システムの `ffmpeg` を PATH に通しても構いません。ムービー取得時は `install_jp.py` の実行にも同じ Python 3.11 以上を指定してください（Windows: `py -3.11 install_jp.py`、Linux: `python3.11 install_jp.py`）。
 
 ### Windows の場合 (PowerShell / コマンドプロンプト)
 
 ```powershell
 curl.exe -sLO https://github.com/Madotsukanai/CLANNAD-Steam-JP/raw/refs/heads/main/install_jp.py
-python install_jp.py
+py -3.11 install_jp.py
 ```
 
 ※ゲームのインストール先がデフォルトと異なる場合は、パスを引数に指定して実行してください：
 ```powershell
-python install_jp.py "C:\Program Files (x86)\Steam\steamapps\common\CLANNAD"
+py -3.11 install_jp.py "C:\Program Files (x86)\Steam\steamapps\common\CLANNAD"
 ```
 
 ### Linux の場合 (Proton / Steam Deck)
 
 ```bash
 curl -sLO https://github.com/Madotsukanai/CLANNAD-Steam-JP/raw/refs/heads/main/install_jp.py
-python3 install_jp.py
+python3.11 install_jp.py
 ```
 
 ※パスを指定して実行する場合：
 ```bash
-python3 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
+python3.11 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
 ```
 
 ### オープニングムービーについて
 
-`install_jp.py` は `yt-dlp` でオープニングムービーを取得し、`ffmpeg` でゲーム用の WMV に変換して `mov_jp/` に配置します。`yt-dlp` または `ffmpeg` が見つからない場合はムービーの置換だけをスキップし、それ以外の日本語化は続行します。`mov_jp/OP00.wmv` と `mov_jp/OP00_HIGH.wmv` が両方存在する場合も、再取得・変換をスキップします。
+`install_jp.py` は `yt-dlp` でオープニングムービーを取得し、`ffmpeg` でゲーム用の WMV に変換して `mov_jp/` に配置します。YouTubeの仕様変更で取得に失敗する場合は、上記のとおり新しいPython・`yt-dlp[default]`・Denoを使用してください。必要なツールが見つからない場合はムービーの置換だけをスキップし、それ以外の日本語化は続行します。`mov_jp/OP00.wmv` と `mov_jp/OP00_HIGH.wmv` が両方存在する場合も、再取得・変換をスキップします。
 
 ---
 

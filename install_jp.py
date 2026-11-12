@@ -470,7 +470,7 @@ def _find_ffprobe():
         pass
     return shutil.which('ffprobe')
 
-def _download_youtube(url, output_path):
+def _download_youtube(url, output_path, ffmpeg):
     """Download video: prefer yt_dlp library, fall back to yt-dlp CLI."""
     # Try Python library first
     try:
@@ -478,6 +478,7 @@ def _download_youtube(url, output_path):
         ydl_opts = {
             'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
             'merge_output_format': 'mkv',
+            'ffmpeg_location': ffmpeg,
             'outtmpl': str(output_path),
             'quiet': False,
         }
@@ -491,6 +492,7 @@ def _download_youtube(url, output_path):
     if not yt_dlp_bin:
         return None  # not available at all
     r = subprocess.run([yt_dlp_bin,
+                        '--ffmpeg-location', ffmpeg,
                         '-f', 'bestvideo[height<=720]+bestaudio/best[height<=720]',
                         '--merge-output-format', 'mkv',
                         '-o', str(output_path), url])
@@ -548,7 +550,7 @@ def ensure_movie(game):
     tmp_dl = mov_jp / '.dl_tmp.mkv'
     if not tmp_dl.exists():
         print('[mov] downloading OP movie from YouTube...')
-        result = _download_youtube(OP_YOUTUBE_URL, tmp_dl)
+        result = _download_youtube(OP_YOUTUBE_URL, tmp_dl, ffmpeg)
         if not result:
             print('[mov] WARNING: download failed')
             if tmp_dl.exists(): tmp_dl.unlink()
