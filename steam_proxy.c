@@ -447,6 +447,13 @@ HWND WINAPI Hook_CreateDialogParamW(HINSTANCE instance, LPCWSTR templ, HWND pare
 
 static int rewrite_w(LPCWSTR in, wchar_t *out, size_t cap) {
     if (g_jp != 1 || !in) return 0;
+    wchar_t *scene = wcsistr(in, L"SceneZH.pck");
+    if (scene) {
+        size_t pre = (size_t)(scene - in); const wchar_t *suf = L"SceneJP.pck";
+        if (pre + lstrlenW(suf) + 1 >= cap) return 0;
+        lstrcpynW(out, in, (int)pre + 1); lstrcatW(out, suf);
+        return file_exists_w(out) ? 1 : 0;
+    }
     wchar_t *pos = wcsistr(in, L"GameexeZH.dat");
     if (pos) {
         size_t pre = (size_t)(pos - in); const wchar_t *suf = L"GameexeJP.dat";
@@ -474,6 +481,14 @@ static int rewrite_w(LPCWSTR in, wchar_t *out, size_t cap) {
 }
 static int rewrite_a(LPCSTR in, char *out, size_t cap) {
     if (g_jp != 1 || !in) return 0;
+    char *scene = stristr(in, "SceneZH.pck");
+    if (scene) {
+        size_t pre = (size_t)(scene - in); const char *suf = "SceneJP.pck";
+        if (pre + lstrlenA(suf) + 1 >= cap) return 0;
+        lstrcpynA(out, in, (int)pre + 1); lstrcatA(out, suf);
+        wchar_t w[MAX_PATH*2]; MultiByteToWideChar(CP_ACP,0,out,-1,w,MAX_PATH*2);
+        return file_exists_w(w) ? 1 : 0;
+    }
     char *pos = stristr(in, "GameexeZH.dat");
     if (pos) {
         size_t pre = (size_t)(pos - in); const char *suf = "GameexeJP.dat";

@@ -13,6 +13,7 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 
 - **リソースの復元と日本語化 (`install_jp.py`)**
   - `GameexeZH.dat` を展開・変換し、日本語設定を含む `GameexeJP.dat` を生成
+  - `SceneZH.pck` 内の中国語文字列を置換し、日本語版 `SceneJP.pck` を生成
   - `dat/*.dbs`（テキストおよび設定テーブル）内の日本語データを復元し `dat_jp/` に配置
   - `g00` フォルダ内の日本語オリジナルグラフィックを `g00_jp/` に復元
   - 中国語版で画像化されていた設定画面等のUIボタン・ラベルを Pillow を用いて日本語版UI画像として合成・生成
@@ -20,7 +21,7 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 
 - **プロキシDLL (`steam_api.dll` / `steam_proxy.c`)**
   - 元の `steam_api.dll`（`steam_api_original.dll`）のAPI呼び出しを透過的に中継
-  - ゲームエンジンによるファイルアクセスを `g00_jp/`、`dat_jp/`、`GameexeJP.dat`、日本語フォントへ自動リダイレクト
+  - ゲームエンジンによるファイルアクセスを `g00_jp/`、`dat_jp/`、`GameexeJP.dat`、`SceneJP.pck`、日本語フォントへ自動リダイレクト
   - Win32 CBTフック（`WH_CBT`）およびAPIフックを用い、各種設定ダイアログ（環境設定、ムービー再生設定、フォント設定など）のUIテキストを日本語に動的置換
   - 起動時の言語選択ダイアログ、または環境変数／起動引数による日本語・中国語の切り替え
 
@@ -120,7 +121,7 @@ Steamの「CLANNAD」のプロパティ →「起動オプション」に以下�
 ```bash
 python3 install_jp.py --remove
 ```
-バックアップされていた `steam_api_original.dll` が `steam_api.dll` に復元され、生成された `GameexeJP.dat`、`dat_jp/`、`g00_jp/` が削除されます。
+バックアップされていた `steam_api_original.dll` が `steam_api.dll` に復元され、生成された `GameexeJP.dat`、`SceneJP.pck`、`dat_jp/`、`g00_jp/` が削除されます。
 
 ---
 

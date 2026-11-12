@@ -17,6 +17,24 @@ else:
 # -------------------- crypto / lzss / dbs / gameexe --------------------
 CLANNAD_KEY = bytes([0x3B,0x54,0xDC,0x74,0x2F,0xBA,0x0C,0xD6,0xAC,0x08,0xD2,0x23,0xEC,0x60,0xA9,0x2E])
 DBS_KEY = bytes([0x2D,0x62,0xF4,0x89]*4)
+DECRYPT2_T0 = bytes([
+    0x70,0xF8,0xA6,0xB0,0xA1,0xA5,0x28,0x4F,0xB5,0x2F,0x48,0xFA,0xE1,0xE9,0x4B,0xDE,
+    0xB7,0x4F,0x62,0x95,0x8B,0xE0,0x03,0x80,0xE7,0xCF,0x0F,0x6B,0x92,0x01,0xEB,0xF8,
+    0xA2,0x88,0xCE,0x63,0x04,0x38,0xD2,0x6D,0x8C,0xD2,0x88,0x76,0xA7,0x92,0x71,0x8F,
+    0x4E,0xB6,0x8D,0x01,0x79,0x88,0x83,0x0A,0xF9,0xE9,0x2C,0xDB,0x67,0xDB,0x91,0x14,
+    0xD5,0x9A,0x4E,0x79,0x17,0x23,0x08,0x96,0x0E,0x1D,0x15,0xF9,0xA5,0xA0,0x6F,0x58,
+    0x17,0xC8,0xA9,0x46,0xDA,0x22,0xFF,0xFD,0x87,0x12,0x42,0xFB,0xA9,0xB8,0x67,0x6C,
+    0x91,0x67,0x64,0xF9,0xD1,0x1E,0xE4,0x50,0x64,0x6F,0xF2,0x0B,0xDE,0x40,0xE7,0x47,
+    0xF1,0x03,0xCC,0x2A,0xAD,0x7F,0x34,0x21,0xA0,0x64,0x26,0x98,0x6C,0xED,0x69,0xF4,
+    0xB5,0x23,0x08,0x6E,0x7D,0x92,0xF6,0xEB,0x93,0xF0,0x7A,0x89,0x5E,0xF9,0xF8,0x7A,
+    0xAF,0xE8,0xA9,0x48,0xC2,0xAC,0x11,0x6B,0x2B,0x33,0xA7,0x40,0x0D,0xDC,0x7D,0xA7,
+    0x5B,0xCF,0xC8,0x31,0xD1,0x77,0x52,0x8D,0x82,0xAC,0x41,0xB8,0x73,0xA5,0x4F,0x26,
+    0x7C,0x0F,0x39,0xDA,0x5B,0x37,0x4A,0xDE,0xA4,0x49,0x0B,0x7C,0x17,0xA3,0x43,0xAE,
+    0x77,0x06,0x64,0x73,0xC0,0x43,0xA3,0x18,0x5A,0x0F,0x9F,0x02,0x4C,0x7E,0x8B,0x01,
+    0x9F,0x2D,0xAE,0x72,0x54,0x13,0xFF,0x96,0xAE,0x0B,0x34,0x58,0xCF,0xE3,0x00,0x78,
+    0xBE,0xE3,0xF5,0x61,0xE4,0x87,0x7C,0xFC,0x80,0xAF,0xC4,0x8D,0x46,0x3A,0x5D,0xD0,
+    0x36,0xBC,0xE5,0x60,0x77,0x68,0x08,0x4F,0xBB,0xAB,0xE2,0x78,0x07,0xE8,0x73,0xBF,
+])
 
 def _crypt1_xor(buf, key):
     b=bytearray(buf); klen=len(key)
@@ -96,7 +114,7 @@ def lzss32_decompress(src):
     if len(out)!=org_size: out=out[:org_size]+b'\x00'*(max(0,org_size-len(out)))
     return bytes(out)
 
-def lzss_compress(data, literal_size=1):
+def lzss_compress(data, literal_size=1, max_chain_scan=64):
     """Greedy LZSS encoder compatible with Siglus (byte LZSS or 24bpp LZSS32)."""
     bgra_indexing = literal_size == 3
     unit = literal_size
@@ -106,7 +124,7 @@ def lzss_compress(data, literal_size=1):
         org_size=(len(data)//3)*4; max_units=16; min_units=1; max_off=0xFFF*3
     key_bytes=3 if bgra_indexing else 2
     buckets=defaultdict(list); out=bytearray(); flag_pos=None; bit=8
-    n=len(data); dw_total=n//3; good_enough=max_units-4; MAX_CHAIN_SCAN=64
+    n=len(data); dw_total=n//3; good_enough=max_units-4
     def record(pos):
         if pos>=unit and pos+key_bytes<=n: buckets[data[pos:pos+key_bytes]].append(pos)
     def new_block():
@@ -120,7 +138,7 @@ def lzss_compress(data, literal_size=1):
             key=data[ptr:ptr+key_bytes]; chain=buckets.get(key)
             if chain:
                 i=bisect_left(chain, ptr-max_off); j=len(chain)
-                if j-i>MAX_CHAIN_SCAN: i=j-MAX_CHAIN_SCAN
+                if j-i>max_chain_scan: i=j-max_chain_scan
                 if bgra_indexing:
                     remaining_dw=dw_total-ptr//3
                     stop_u=max_units if remaining_dw>max_units else remaining_dw-1
@@ -249,6 +267,215 @@ def gameexe_pack(raw):
     data=_crypt1_xor(body, CLANNAD_KEY)
     data=_c2(data, DECRYPT2_T1)
     return b'\x00\x00\x00\x00\x01\x00\x00\x00' + data
+
+# -------------------- scene pck --------------------
+SCENE_PATCH = {
+    "_cl_forclannad": {
+        25: ("【女孩】", "【女の子】"),
+        37: ("伊吹老师", "伊吹さん"),
+        39: ("伊吹老师", "伊吹先生"),
+        56: ("冈崎", "岡"),
+        57: ("同学", "崎"),
+        79: ("冈崎", "岡"),
+        80: ("同学", "崎"),
+        105: ("冈崎", "岡"),
+        106: ("同学", "崎"),
+        135: ("冈崎", "岡"),
+        136: ("同学", "崎"),
+        114: ("女孩", "女の子"),
+        123: ("女孩", "女の子"),
+    },
+}
+
+def _scene_decode(blob):
+    data=_crypt1_xor(blob, CLANNAD_KEY)
+    return lzss_decompress(_c2(data, DECRYPT2_T0), tolerant=False)
+
+def _scene_lz_ok(buf):
+    arc,org=struct.unpack_from('II',buf,0)
+    end,p,n=min(arc,len(buf)),8,0
+    while True:
+        if p>=end: return n==org
+        flag=buf[p]; p+=1
+        for _ in range(8):
+            if n==org: return True
+            if n>org or p>=end: return False
+            if flag&1:
+                p+=1; n+=1
+            else:
+                if p+2>end: return False
+                token=buf[p]|(buf[p+1]<<8); p+=2
+                off=token>>4
+                if off==0 or off>n: return False
+                n+=(token&15)+2
+            flag>>=1
+
+def _scene_encode(ss, fit_len):
+    best=None
+    for chain in (64,256,2048):
+        compressed=lzss_compress(ss,max_chain_scan=chain)
+        if best is None or len(compressed)<len(best): best=compressed
+        if len(best)<=fit_len: break
+    fitted=False
+    if len(best)<=fit_len:
+        _,org=struct.unpack_from('II',best,0)
+        best=struct.pack('II',fit_len,org)+best[8:]+bytes(fit_len-len(best))
+        fitted=True
+    if not _scene_lz_ok(best):
+        raise RuntimeError('SceneJP圧縮データがエンジン基準の検証に失敗しました')
+    if lzss_decompress(best,tolerant=False)!=ss:
+        raise RuntimeError('SceneJP圧縮データの往復検証に失敗しました')
+    return _crypt1_xor(_c2(best,DECRYPT2_T0),CLANNAD_KEY),fitted
+
+def _xor_scene_u16(data,key):
+    if not data: return data
+    repeated=struct.pack('<H',key)*(len(data)//2)
+    return (int.from_bytes(data,'little')^int.from_bytes(repeated,'little')).to_bytes(len(data),'little')
+
+def _scene_table(scene):
+    header=list(struct.unpack_from('33I',scene,0))
+    entries=[struct.unpack_from('II',scene,header[3]+8*i) for i in range(header[4])]
+    return header,entries
+
+def _scene_string(scene,header,entries,index):
+    offset,length=entries[index]
+    raw=scene[header[5]+offset*2:header[5]+(offset+length)*2]
+    return _xor_scene_u16(raw,(28807*index)&0xffff).decode('utf-16-le',errors='replace')
+
+def _scene_edit(scene,edits):
+    header,entries=_scene_table(scene)
+    index_offset,count,string_offset=header[3],header[4],header[5]
+    units=sum(length for _,length in entries)
+    old_end=string_offset+units*2
+    order=sorted((i for i in range(count) if entries[i][1]),key=lambda i:entries[i][0])
+    cursor=0
+    for i in order:
+        if entries[i][0]!=cursor:
+            raise ValueError('SceneJP文字列領域が連続していません')
+        cursor+=entries[i][1]
+    for i in edits:
+        if not 0<=i<count or entries[i][1]==0:
+            raise ValueError('SceneJP文字列index %d は範囲外または長さ0です'%i)
+    if index_offset+8*count>string_offset:
+        raise ValueError('SceneJP索引表と文字列領域が重なっています')
+    area,new_entries,cursor=bytearray(),list(entries),0
+    for i in order:
+        offset,length=entries[i]
+        encoded=(_xor_scene_u16(edits[i].encode('utf-16-le'),(28807*i)&0xffff)
+                 if i in edits else scene[string_offset+offset*2:string_offset+(offset+length)*2])
+        new_entries[i]=(cursor,len(encoded)//2)
+        cursor+=len(encoded)//2
+        area+=encoded
+    delta=len(area)-units*2
+    for i in range(1,32,2):
+        if i in (3,5): continue
+        if header[i]<old_end:
+            raise ValueError('SceneJP文字列領域より前にあるセクション(offset field %d)'%i)
+        header[i]+=delta
+    result=bytearray(struct.pack('33I',*header))
+    result+=scene[132:index_offset]
+    result+=b''.join(struct.pack('II',*entry) for entry in new_entries)
+    result+=scene[index_offset+8*count:string_offset]
+    result+=area
+    result+=scene[old_end:]
+    return bytes(result)
+
+def _scene_verify(old,new,edits):
+    old_header,old_entries=_scene_table(old)
+    new_header,new_entries=_scene_table(new)
+    assert old_header[4]==new_header[4], 'SceneJP文字列数が変わりました'
+    for i in range(old_header[4]):
+        expected=edits.get(i)
+        if expected is None: expected=_scene_string(old,old_header,old_entries,i)
+        assert _scene_string(new,new_header,new_entries,i)==expected, 'SceneJP string %d mismatch'%i
+    old_end=old_header[5]+sum(length for _,length in old_entries)*2
+    new_end=new_header[5]+sum(length for _,length in new_entries)*2
+    assert old[old_end:]==new[new_end:], 'SceneJP文字列領域の後続データが変わりました'
+    delta=new_end-old_end
+    for i in range(1,32,2):
+        if i not in (3,5): assert new_header[i]==old_header[i]+delta, 'SceneJP header field %d'%i
+
+class ScenePck:
+    def __init__(self,raw):
+        self.raw=raw
+        values=struct.unpack_from('23I',raw,0)
+        if values[0]!=92: raise ValueError('想定外のSceneZH.pckヘッダ長: %d'%values[0])
+        name_index,name_count,name_offset,name_size=values[13:17]
+        scene_count=values[18]
+        if name_count!=scene_count or name_size!=scene_count or values[20]!=scene_count:
+            raise ValueError('SceneZH.pckのシーン数が一致しません')
+        self.info_offset,self.data_offset,self.count=values[17],values[19],scene_count
+        if self.info_offset+8*scene_count!=self.data_offset:
+            raise ValueError('SceneZH.pckのsceneInfo/sceneDataが連続していません')
+        self.names=[]
+        for i in range(name_count):
+            offset,length=struct.unpack_from('II',raw,name_index+8*i)
+            self.names.append(raw[name_offset+offset*2:name_offset+(offset+length)*2].decode('utf-16-le'))
+        self.info=[struct.unpack_from('II',raw,self.info_offset+8*i) for i in range(scene_count)]
+        end=0
+        for offset,length in self.info:
+            if offset!=end: raise ValueError('SceneZH.pckのシーンデータが連続していません')
+            end=offset+length
+        self.tail=raw[self.data_offset+end:]
+
+    def blob(self,index):
+        offset,length=self.info[index]
+        return self.raw[self.data_offset+offset:self.data_offset+offset+length]
+
+    def build(self,new_blobs):
+        blobs=[new_blobs.get(i,self.blob(i)) for i in range(self.count)]
+        entries=[]; offset=0
+        for blob in blobs:
+            entries.append(struct.pack('II',offset,len(blob)))
+            offset+=len(blob)
+        return self.raw[:self.info_offset]+b''.join(entries)+b''.join(blobs)+self.tail
+
+def build_scene_jp(src,out,log=print):
+    src,out=Path(src),Path(out)
+    if not src.is_file(): raise RuntimeError('SceneZH.pckが見つかりません: %s'%src)
+    original=src.read_bytes()
+    pck=ScenePck(original)
+    log('[scene] %s: %dシーン / 未参照データ %d bytes保持'%(src.name,pck.count,len(pck.tail)))
+    indices={name:i for i,name in enumerate(pck.names)}
+    new_blobs={}; shifted=False
+    for scene,items in SCENE_PATCH.items():
+        if scene not in indices: raise RuntimeError('SceneJP対象シーンが見つかりません: %s'%scene)
+        index=indices[scene]
+        decoded=_scene_decode(pck.blob(index))
+        header,entries=_scene_table(decoded)
+        edits={}
+        for string_index,(old_text,new_text) in sorted(items.items()):
+            current=_scene_string(decoded,header,entries,string_index)
+            if current not in (old_text,new_text):
+                raise RuntimeError('%s[%d] が想定外です: %r (期待 %r)'%(scene,string_index,current,old_text))
+            if current!=new_text:
+                edits[string_index]=new_text
+                log('[scene] %s[%d] %r -> %r'%(scene,string_index,current,new_text))
+        if not edits:
+            log('[scene] %s: 変更なし'%scene)
+            continue
+        modified=_scene_edit(decoded,edits)
+        _scene_verify(decoded,modified,edits)
+        blob,fitted=_scene_encode(modified,len(pck.blob(index)))
+        if not fitted:
+            shifted=True
+            log('[scene] WARNING: %s blobが元サイズから %+d bytes変化'%(scene,len(blob)-len(pck.blob(index))))
+        new_blobs[index]=blob
+    data=pck.build(new_blobs)
+    check=ScenePck(data)
+    assert check.names==pck.names and check.tail==pck.tail, 'SceneJP.pck構造検証に失敗しました'
+    for i in range(pck.count):
+        if i not in new_blobs:
+            assert check.blob(i)==pck.blob(i), '未変更シーンが変化しました: %s'%pck.names[i]
+    for i in new_blobs:
+        scene=pck.names[i]
+        decoded=_scene_decode(check.blob(i))
+        header,entries=_scene_table(decoded)
+        for string_index,(_,new_text) in SCENE_PATCH[scene].items():
+            assert _scene_string(decoded,header,entries,string_index)==new_text, 'SceneJP反映NG: %s[%d]'%(scene,string_index)
+    if not shifted: assert len(data)==len(original), 'SceneJPのファイルサイズが変化しました'
+    log('[scene] 検証OK: %dシーン / %d -> %d bytes'%(pck.count,len(original),len(data)))
+    return atomic_write(out,data)
 
 # -------------------- conversion logic --------------------
 KANA=re.compile(r'[\u3040-\u30ff]'); HAN=re.compile(r'[\u4e00-\u9fff]')
@@ -1053,7 +1280,7 @@ def main():
             print('[proxy] restored steam_api.dll')
         elif not proxy.exists():
             print('[proxy] not installed')
-        for f in [game/'GameexeJP.dat', game/'dat'/FONT_NAME]:
+        for f in [game/'GameexeJP.dat', game/'SceneJP.pck', game/'dat'/FONT_NAME]:
             if f.exists():
                 f.unlink(); print(f'[remove] {f}')
         for d in [game/'dat_jp', game/'g00_jp', game/'mov_jp']:
@@ -1062,6 +1289,7 @@ def main():
         print('[done] JP localization removed')
         return
     assert (game/'GameexeZH.dat').exists(), 'GameexeZH.dat missing'
+    assert (game/'SceneZH.pck').exists(), 'SceneZH.pck missing'
     (game/'g00_jp').mkdir(exist_ok=True); (game/'dat_jp').mkdir(exist_ok=True)
     # 1 Gameexe
     text=gameexe_unpack(game/'GameexeZH.dat').decode('utf-16-le')
@@ -1073,6 +1301,7 @@ def main():
     assert dec.decode('utf-16-le','strict')==newt
     atomic_write(game/'GameexeJP.dat', packed)
     print('[GameexeJP.dat] written' if newt!=text else '[GameexeJP.dat] unchanged')
+    build_scene_jp(game/'SceneZH.pck',game/'SceneJP.pck')
     # 2 dbs
     total_c=total_w=0
     for p in sorted((game/'dat').iterdir()):
