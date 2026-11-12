@@ -67,10 +67,6 @@ python3 install_jp.py
 python3 install_jp.py ~/.local/share/Steam/steamapps/common/CLANNAD
 ```
 
-### オープニングムービーについて
-
-`install_jp.py` は `yt-dlp` でオープニングムービーを取得し、`ffmpeg` でゲーム用の WMV に変換して `mov_jp/` に配置します。YouTubeの仕様変更で取得に失敗する場合は、上記のとおり新しいPython・`yt-dlp[default]`・Denoを使用してください。必要なツールが見つからない場合はムービーの置換だけをスキップし、それ以外の日本語化は続行します。`mov_jp/OP00.wmv` と `mov_jp/OP00_HIGH.wmv` が両方存在する場合も、再取得・変換をスキップします。
-
 ---
 
 ### (開発者向け) プロキシDLLのソースビルド
