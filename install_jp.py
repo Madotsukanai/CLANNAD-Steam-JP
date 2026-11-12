@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, atexit, json, os, re, shutil, struct, subprocess, sys, tempfile, urllib.request
+import argparse, atexit, hashlib, json, os, re, shutil, struct, subprocess, sys, tempfile, urllib.request
 from bisect import bisect_left
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -581,7 +581,7 @@ def _fmt_size(n, unit):
         return f'{int(v)} {unit}'
     return f'{v:.1f} {unit}'
 
-def _download_to_file(url, dest, headers=None, min_size=0):
+def _download_to_file(url, dest, headers=None, min_size=0, expected_sha256=None):
     req=urllib.request.Request(url, headers=headers or {'User-Agent':'clannad-jp-installer'})
     with urllib.request.urlopen(req) as r:
         total=r.getheader('Content-Length')
@@ -590,11 +590,13 @@ def _download_to_file(url, dest, headers=None, min_size=0):
         if total is not None and total <= 0:
             total=None
         data=bytearray(); read=0; chunk=1024*64
+        digest=hashlib.sha256() if expected_sha256 else None
         u=_pick_unit(total) if total else 'B'
         while True:
             b=r.read(chunk)
             if not b: break
             data.extend(b); read+=len(b)
+            if digest: digest.update(b)
             if not total: u=_pick_unit(read or 1)
             if total:
                 pct=min(100, read*100//total)
@@ -605,6 +607,10 @@ def _download_to_file(url, dest, headers=None, min_size=0):
         print()
     if len(data) < min_size:
         raise RuntimeError('downloaded file too small')
+    if digest:
+        actual=digest.hexdigest()
+        if actual != expected_sha256.lower():
+            raise RuntimeError('SHA-256 mismatch for %s: expected %s, got %s'%(dest,expected_sha256,actual))
     atomic_write(dest, bytes(data))
 
 def download_latest_proxy(dest):
@@ -612,15 +618,23 @@ def download_latest_proxy(dest):
     req=urllib.request.Request(api, headers={'User-Agent':'clannad-jp-installer','Accept':'application/vnd.github+json'})
     with urllib.request.urlopen(req) as r:
         rel=json.load(r)
-    url=None
+    asset=None
     for a in rel.get('assets',[]):
         if a.get('name')==PROXY_ASSET:
-            url=a.get('browser_download_url'); break
-    if not url:
+            asset=a; break
+    if not asset:
         raise RuntimeError(f'{PROXY_ASSET} not found in latest release of {PROXY_REPO}')
+    url=asset.get('browser_download_url')
+    digest=asset.get('digest')
+    if not url:
+        raise RuntimeError(f'{PROXY_ASSET} has no download URL in latest release of {PROXY_REPO}')
+    match=re.fullmatch(r'sha256:([0-9a-fA-F]{64})',digest or '')
+    if not match:
+        raise RuntimeError(f'{PROXY_ASSET} has no valid SHA-256 digest in latest release of {PROXY_REPO}')
     tag=rel.get('tag_name','?')
     print(f'[proxy] latest {PROXY_REPO} {tag} -> {PROXY_ASSET}')
-    _download_to_file(url, dest, headers={'User-Agent':'clannad-jp-installer'}, min_size=1024)
+    _download_to_file(url, dest, headers={'User-Agent':'clannad-jp-installer'}, min_size=1024, expected_sha256=match.group(1))
+    print('[proxy] SHA-256 verified')
 
 def ensure_proxy(game):
     orig=game/'steam_api_original.dll'; dst=game/'steam_api.dll'
