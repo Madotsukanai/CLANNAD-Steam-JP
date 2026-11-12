@@ -31,17 +31,8 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 - **OS**: Windows または Linux (Proton)
 - **ゲーム**: Steam版『CLANNAD』（中国語版）
 - **Python**: 3.11 以上
-  - `Pillow`（UI画像生成に必要）
     ```bash
-    python -m pip install Pillow
-    ```
-  - オープニングムービーの置換には `yt-dlp` と JavaScript ランタイムも必要です。`yt-dlp[default]` にはYouTubeのJSチャレンジ用コンポーネントが含まれます。
-    ```bash
-    # Windows
-    py -3.11 -m pip install --upgrade "yt-dlp[default]" imageio-ffmpeg
-
-    # Linux
-    python3.11 -m pip install --upgrade "yt-dlp[default]" imageio-ffmpeg
+    pip install pillow yt-dlp imageio-ffmpeg
     ```
     さらに [Deno 2.3.0 以上](https://docs.deno.com/runtime/getting_started/installation/)をインストールして PATH に追加してください。`imageio-ffmpeg` の代わりに、システムの `ffmpeg` を PATH にインストールしても使用できます。
 - **ビルドツール**（`steam_api.dll` をソースからビルドする場合）:
@@ -51,23 +42,6 @@ Steam版『CLANNAD』（SiglusEngine_Steam.exe）を日本語でプレイする�
 ---
 
 ## インストール手順
-
-> [!NOTE]
-> UI画像の合成に `Pillow` を使用します。未インストールの場合はあらかじめ導入してください。
-> ```bash
-> python -m pip install Pillow
-> ```
->
-> オープニングムービーも日本語版に置き換える場合は、追加で `yt-dlp[default]`、Deno 2.3.0 以上、および `ffmpeg` が必要です。
-> ```bash
-> # Windows
-> py -3.11 -m pip install --upgrade "yt-dlp[default]" imageio-ffmpeg
->
-> # Linux
-> python3.11 -m pip install --upgrade "yt-dlp[default]" imageio-ffmpeg
-> ```
-> Deno は[公式手順](https://docs.deno.com/runtime/getting_started/installation/)でインストールし、PATH に追加してください。`imageio-ffmpeg` を使わず、システムの `ffmpeg` を PATH に通しても構いません。ムービー取得時は `install_jp.py` の実行にも同じ Python 3.11 以上を指定してください（Windows: `py -3.11 install_jp.py`、Linux: `python3.11 install_jp.py`）。
-
 ### Windows の場合 (PowerShell / コマンドプロンプト)
 
 ```powershell
