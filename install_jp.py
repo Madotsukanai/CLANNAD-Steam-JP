@@ -566,6 +566,7 @@ PROXY_REPO='Madotsukanai/CLANNAD-Steam-JP'
 PROXY_ASSET='steam_api.dll'
 FONT_URL='https://github.com/notofonts/noto-cjk/raw/refs/heads/main/Sans/Mono/NotoSansMonoCJKjp-Regular.otf'
 FONT_NAME='NotoSansMonoCJKjp-Regular.otf'
+FONT_SHA256='4d01725be822d144cf9a56ade981e6fb920cd7a610b8fc24cc601a920beea5b9'
 
 def _pick_unit(n):
     units=('B','KB','MB','GB')
@@ -582,6 +583,8 @@ def _fmt_size(n, unit):
     return f'{v:.1f} {unit}'
 
 def _download_to_file(url, dest, headers=None, min_size=0, expected_sha256=None):
+    if not expected_sha256 or not re.fullmatch(r'[0-9a-fA-F]{64}', expected_sha256):
+        raise RuntimeError('expected SHA-256 hash is required for download: %s' % url)
     req=urllib.request.Request(url, headers=headers or {'User-Agent':'clannad-jp-installer'})
     with urllib.request.urlopen(req) as r:
         total=r.getheader('Content-Length')
@@ -590,13 +593,13 @@ def _download_to_file(url, dest, headers=None, min_size=0, expected_sha256=None)
         if total is not None and total <= 0:
             total=None
         data=bytearray(); read=0; chunk=1024*64
-        digest=hashlib.sha256() if expected_sha256 else None
+        digest=hashlib.sha256()
         u=_pick_unit(total) if total else 'B'
         while True:
             b=r.read(chunk)
             if not b: break
             data.extend(b); read+=len(b)
-            if digest: digest.update(b)
+            digest.update(b)
             if not total: u=_pick_unit(read or 1)
             if total:
                 pct=min(100, read*100//total)
@@ -607,10 +610,9 @@ def _download_to_file(url, dest, headers=None, min_size=0, expected_sha256=None)
         print()
     if len(data) < min_size:
         raise RuntimeError('downloaded file too small')
-    if digest:
-        actual=digest.hexdigest()
-        if actual != expected_sha256.lower():
-            raise RuntimeError('SHA-256 mismatch for %s: expected %s, got %s'%(dest,expected_sha256,actual))
+    actual=digest.hexdigest()
+    if actual != expected_sha256.lower():
+        raise RuntimeError('SHA-256 mismatch for %s: expected %s, got %s'%(dest,expected_sha256,actual))
     atomic_write(dest, bytes(data))
 
 def download_latest_proxy(dest):
@@ -657,7 +659,8 @@ def ensure_proxy(game):
 
 def download_font(dest):
     print(f'[font] downloading {FONT_NAME}')
-    _download_to_file(FONT_URL, dest, headers={'User-Agent':'clannad-jp-installer'}, min_size=1024*1024)
+    _download_to_file(FONT_URL, dest, headers={'User-Agent':'clannad-jp-installer'}, min_size=1024*1024, expected_sha256=FONT_SHA256)
+    print('[font] SHA-256 verified')
 
 _font_path_cache=None
 def ensure_font(game):
