@@ -383,17 +383,21 @@ def _scene_edit(scene,edits):
 def _scene_verify(old,new,edits):
     old_header,old_entries=_scene_table(old)
     new_header,new_entries=_scene_table(new)
-    assert old_header[4]==new_header[4], 'SceneJP文字列数が変わりました'
+    if old_header[4]!=new_header[4]:
+        raise RuntimeError('SceneJP文字列数が変わりました')
     for i in range(old_header[4]):
         expected=edits.get(i)
         if expected is None: expected=_scene_string(old,old_header,old_entries,i)
-        assert _scene_string(new,new_header,new_entries,i)==expected, 'SceneJP string %d mismatch'%i
+        if _scene_string(new,new_header,new_entries,i)!=expected:
+            raise RuntimeError('SceneJP string %d mismatch'%i)
     old_end=old_header[5]+sum(length for _,length in old_entries)*2
     new_end=new_header[5]+sum(length for _,length in new_entries)*2
-    assert old[old_end:]==new[new_end:], 'SceneJP文字列領域の後続データが変わりました'
+    if old[old_end:]!=new[new_end:]:
+        raise RuntimeError('SceneJP文字列領域の後続データが変わりました')
     delta=new_end-old_end
     for i in range(1,32,2):
-        if i not in (3,5): assert new_header[i]==old_header[i]+delta, 'SceneJP header field %d'%i
+        if i not in (3,5) and new_header[i]!=old_header[i]+delta:
+            raise RuntimeError('SceneJP header field %d'%i)
 
 class ScenePck:
     def __init__(self,raw):
@@ -463,17 +467,21 @@ def build_scene_jp(src,out,log=print):
         new_blobs[index]=blob
     data=pck.build(new_blobs)
     check=ScenePck(data)
-    assert check.names==pck.names and check.tail==pck.tail, 'SceneJP.pck構造検証に失敗しました'
+    if check.names!=pck.names or check.tail!=pck.tail:
+        raise RuntimeError('SceneJP.pck構造検証に失敗しました')
     for i in range(pck.count):
         if i not in new_blobs:
-            assert check.blob(i)==pck.blob(i), '未変更シーンが変化しました: %s'%pck.names[i]
+            if check.blob(i)!=pck.blob(i):
+                raise RuntimeError('未変更シーンが変化しました: %s'%pck.names[i])
     for i in new_blobs:
         scene=pck.names[i]
         decoded=_scene_decode(check.blob(i))
         header,entries=_scene_table(decoded)
         for string_index,(_,new_text) in SCENE_PATCH[scene].items():
-            assert _scene_string(decoded,header,entries,string_index)==new_text, 'SceneJP反映NG: %s[%d]'%(scene,string_index)
-    if not shifted: assert len(data)==len(original), 'SceneJPのファイルサイズが変化しました'
+            if _scene_string(decoded,header,entries,string_index)!=new_text:
+                raise RuntimeError('SceneJP反映NG: %s[%d]'%(scene,string_index))
+    if not shifted and len(data)!=len(original):
+        raise RuntimeError('SceneJPのファイルサイズが変化しました')
     log('[scene] 検証OK: %dシーン / %d -> %d bytes'%(pck.count,len(original),len(data)))
     return atomic_write(out,data)
 
@@ -558,7 +566,8 @@ def convert_dbs(path):
     d2=Dbs(b2,u2); c02=d2.data_index.index(JP); c22=d2.data_index.index(CN)
     for rr,row in enumerate(d2.rows):
         if row[c02]=='' and row[c22]!='': continue
-        assert row[c22]==row[c02], (name, rr+1)
+        if row[c22]!=row[c02]:
+            raise RuntimeError('DBS JP/CN mismatch: %s row %d' % (name, rr+1))
     return out,changed,warn
 
 # -------------------- network assets --------------------
@@ -615,7 +624,18 @@ def _download_to_file(url, dest, headers=None, min_size=0, expected_sha256=None)
         raise RuntimeError('SHA-256 mismatch for %s: expected %s, got %s'%(dest,expected_sha256,actual))
     atomic_write(dest, bytes(data))
 
-def download_latest_proxy(dest):
+def _verify_file_sha256(path, expected_sha256, label):
+    if not expected_sha256 or not re.fullmatch(r'[0-9a-fA-F]{64}', expected_sha256):
+        raise RuntimeError('expected SHA-256 hash is required for %s' % label)
+    h=hashlib.sha256()
+    with open(path,'rb') as f:
+        for chunk in iter(lambda: f.read(1024*1024), b''):
+            h.update(chunk)
+    actual=h.hexdigest()
+    if actual != expected_sha256.lower():
+        raise RuntimeError('SHA-256 mismatch for %s: expected %s, got %s'%(label,expected_sha256,actual))
+
+def get_latest_proxy_asset():
     api=f'https://api.github.com/repos/{PROXY_REPO}/releases/latest'
     req=urllib.request.Request(api, headers={'User-Agent':'clannad-jp-installer','Accept':'application/vnd.github+json'})
     with urllib.request.urlopen(req) as r:
@@ -633,29 +653,42 @@ def download_latest_proxy(dest):
     match=re.fullmatch(r'sha256:([0-9a-fA-F]{64})',digest or '')
     if not match:
         raise RuntimeError(f'{PROXY_ASSET} has no valid SHA-256 digest in latest release of {PROXY_REPO}')
-    tag=rel.get('tag_name','?')
+    return rel.get('tag_name','?'), url, match.group(1)
+
+def download_latest_proxy(dest):
+    tag,url,sha=get_latest_proxy_asset()
     print(f'[proxy] latest {PROXY_REPO} {tag} -> {PROXY_ASSET}')
-    _download_to_file(url, dest, headers={'User-Agent':'clannad-jp-installer'}, expected_sha256=match.group(1))
+    _download_to_file(url, dest, headers={'User-Agent':'clannad-jp-installer'}, expected_sha256=sha)
     print('[proxy] SHA-256 verified')
 
-def ensure_proxy(game):
+def ensure_proxy(game, proxy_source='latest', proxy_path=None, proxy_sha256=None):
     orig=game/'steam_api_original.dll'; dst=game/'steam_api.dll'
     if not orig.exists():
         if not dst.exists():
             raise RuntimeError('steam_api.dll not found in game folder')
         shutil.copy2(dst, orig)
         print('[proxy] backup steam_api.dll -> steam_api_original.dll')
-    local_proxy = Path(__file__).resolve().parent / 'steam_api.dll'
-    if local_proxy.exists():
-        shutil.copy2(local_proxy, dst)
-        print(f'[proxy] installed local {local_proxy} -> {dst}')
+    if proxy_source=='latest':
+        with tempfile.TemporaryDirectory() as td:
+            tmp=Path(td)/PROXY_ASSET
+            download_latest_proxy(tmp)
+            data=tmp.read_bytes()
+        atomic_write(dst, data)
+        print(f'[proxy] installed {dst}')
         return
-    with tempfile.TemporaryDirectory() as td:
-        tmp=Path(td)/PROXY_ASSET
-        download_latest_proxy(tmp)
-        data=tmp.read_bytes()
-    atomic_write(dst, data)
-    print(f'[proxy] installed {dst}')
+    path=Path(proxy_path) if proxy_path else None
+    if proxy_source=='local':
+        path=Path(__file__).resolve().parent/PROXY_ASSET
+    if not path or not path.exists():
+        raise RuntimeError(f'proxy dll not found: {path}')
+    expected=proxy_sha256
+    if not expected:
+        tag,_,expected=get_latest_proxy_asset()
+        print(f'[proxy] verifying local file against latest release {PROXY_REPO} {tag}')
+    _verify_file_sha256(path, expected, str(path))
+    print('[proxy] SHA-256 verified')
+    shutil.copy2(path, dst)
+    print(f'[proxy] installed {path} -> {dst}')
 
 def download_font(dest):
     print(f'[font] downloading {FONT_NAME}')
@@ -668,12 +701,17 @@ def ensure_font(game):
     for d in [game/'dat_jp', game/'dat']:
         existing = d/FONT_NAME
         if existing.exists() and existing.stat().st_size > 1024*1024:
+            try:
+                _verify_file_sha256(existing, FONT_SHA256, str(existing))
+            except Exception as e:
+                print(f'[font] existing font rejected ({e}), re-downloading')
+                continue
             fdir = Path(tempfile.mkdtemp(prefix='clannad_font_'))
             atexit.register(shutil.rmtree, fdir, True)
             fpath = fdir/FONT_NAME
             shutil.copy2(existing, fpath)
             _font_path_cache = fpath
-            print(f'[font] using existing {existing}')
+            print(f'[font] using existing verified {existing}')
             return fpath
     with tempfile.TemporaryDirectory() as td:
         tmp=Path(td)/FONT_NAME
@@ -1266,27 +1304,37 @@ def process_ui_file(ent, game, out_dir, fpath, log):
 
 def apply_ui(game, font_path):
     out_dir=game/'g00_jp'; out_dir.mkdir(exist_ok=True)
-    # copy all *_ZH.g00 baseline first if missing? they may already be there from step 3
     def log(m): print(m)
-    written=0
+    localized={ent['name']+'.g00' for ent in UI_SPEC['files']}
+    updated=0
     for ent in UI_SPEC['files']:
-        if process_ui_file(ent,game,out_dir,font_path,log): written+=1
-    # ensure all other _system_*_ZH.g00 exist (copy from g00_cn/g00 if not localized/present)
+        if process_ui_file(ent,game,out_dir,font_path,log): updated+=1
+    # keep non-localized *_ZH.g00 in sync with source (step 3 placed baselines, but refresh here too)
     src_dir=game/'g00_cn' if (game/'g00_cn').exists() else game/'g00'
-    copied=0
+    synced=0
     for p in src_dir.glob('_system_*_ZH.g00'):
+        if p.name in localized: continue
         dst=out_dir/p.name
-        if not dst.exists():
-            atomic_write(dst,p.read_bytes()); copied+=1
-    log(f'[ui] localized={written} copied_others={copied}')
+        if atomic_write(dst,p.read_bytes()): synced+=1
+    log(f'[ui] targets={len(UI_SPEC["files"])} updated={updated} synced_others={synced}')
 
 # -------------------- main --------------------
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('game', nargs='?', type=Path, default=DEFAULT_GAME, help='install directory')
     ap.add_argument('--remove', action='store_true', help='remove JP localization and restore original files')
+    ap.add_argument('--strict', action='store_true', help='fail immediately if optional steps (UI/movie) fail')
+    ap.add_argument('--proxy-source', choices=['latest','local','file'], default='latest',
+                    help='proxy dll source: latest GitHub release (default), local ./steam_api.dll, or explicit file')
+    ap.add_argument('--proxy-path', type=Path, help='path to proxy dll when --proxy-source=file')
+    ap.add_argument('--proxy-sha256', help='expected SHA-256 for proxy dll (required for --proxy-source=file; optional override for local)')
     a=ap.parse_args(); game=a.game
-    assert (game/'SiglusEngine_Steam.exe').exists(), 'game not found'
+    if a.proxy_source=='file' and not a.proxy_path:
+        ap.error('--proxy-path is required when --proxy-source=file')
+    if a.proxy_source=='file' and not a.proxy_sha256:
+        ap.error('--proxy-sha256 is required when --proxy-source=file')
+    if not (game/'SiglusEngine_Steam.exe').exists():
+        raise FileNotFoundError('game not found: %s' % (game/'SiglusEngine_Steam.exe'))
     if a.remove:
         orig=game/'steam_api_original.dll'
         proxy=game/'steam_api.dll'
@@ -1305,9 +1353,12 @@ def main():
                 shutil.rmtree(d); print(f'[remove] {d}/')
         print('[done] JP localization removed')
         return
-    assert (game/'GameexeZH.dat').exists(), 'GameexeZH.dat missing'
-    assert (game/'SceneZH.pck').exists(), 'SceneZH.pck missing'
+    if not (game/'GameexeZH.dat').exists():
+        raise FileNotFoundError('GameexeZH.dat missing: %s' % (game/'GameexeZH.dat'))
+    if not (game/'SceneZH.pck').exists():
+        raise FileNotFoundError('SceneZH.pck missing: %s' % (game/'SceneZH.pck'))
     (game/'g00_jp').mkdir(exist_ok=True); (game/'dat_jp').mkdir(exist_ok=True)
+    failed_steps=[]
     # 1 Gameexe
     text=gameexe_unpack(game/'GameexeZH.dat').decode('utf-16-le')
     newt=convert_gameexe_text(text)
@@ -1315,7 +1366,8 @@ def main():
     dec_data=_crypt1_xor(_c2(packed[8:], DECRYPT2_T1), CLANNAD_KEY)
     comp,_decomp=struct.unpack('II', dec_data[:8])
     dec=lzss_decompress(dec_data[:8]+dec_data[8:comp], tolerant=True)
-    assert dec.decode('utf-16-le','strict')==newt
+    if dec.decode('utf-16-le','strict')!=newt:
+        raise RuntimeError('GameexeJP round-trip verification failed')
     atomic_write(game/'GameexeJP.dat', packed)
     print('[GameexeJP.dat] written' if newt!=text else '[GameexeJP.dat] unchanged')
     build_scene_jp(game/'SceneZH.pck',game/'SceneJP.pck')
@@ -1346,14 +1398,28 @@ def main():
     try:
         apply_ui(game, font_path)
     except Exception as e:
-        print(f'[ui] WARNING: UI localization failed: {e}')
+        msg=f'UI localization failed: {e}'
+        if a.strict:
+            raise RuntimeError(msg) from e
+        failed_steps.append(('ui', msg))
+        print(f'[ui] WARNING: {msg}')
     # 3c OP movie (YouTube -> WMV)
     try:
         ensure_movie(game)
     except Exception as e:
-        print(f'[mov] WARNING: OP movie processing failed: {e}')
+        msg=f'OP movie processing failed: {e}'
+        if a.strict:
+            raise RuntimeError(msg) from e
+        failed_steps.append(('mov', msg))
+        print(f'[mov] WARNING: {msg}')
     # 4 steam_api proxy
-    ensure_proxy(game)
+    ensure_proxy(game, proxy_source=a.proxy_source, proxy_path=a.proxy_path, proxy_sha256=a.proxy_sha256)
+    if failed_steps:
+        names=', '.join(name for name,_ in failed_steps)
+        print(f'[done] JP localization installed with incomplete steps: {names}')
+        for name,msg in failed_steps:
+            print(f'  - [{name}] {msg}')
+        sys.exit(1)
     print('done')
 
 if __name__=='__main__':

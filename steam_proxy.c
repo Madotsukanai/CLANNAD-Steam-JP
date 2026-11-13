@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <shlwapi.h>
 
 static HINSTANCE g_hInst = NULL;
@@ -29,6 +30,9 @@ typedef int   (__cdecl *PFN_SteamAPI_Init)(void);
 typedef void  (__cdecl *PFN_SteamAPI_UnregisterCallback)(void*, int);
 
 static void install_ui_hooks(void);
+static void install_gdi_hooks(void);
+static void ensure_language_selected(void);
+int   __cdecl wrap_SteamAPI_Init(void);
 
 void* __cdecl wrap_SteamInternal_CreateInterface(const char* a, int* b){ return ((PFN_SteamInternal_CreateInterface)(void*)p_real[0])(a,b); }
 int   __cdecl wrap_SteamAPI_GetHSteamPipe(void){ return ((PFN_SteamAPI_GetHSteamPipe)(void*)p_real[1])(); }
@@ -38,11 +42,6 @@ void  __cdecl wrap_SteamAPI_RegisterCallback(void* a, int b){ ((PFN_SteamAPI_Reg
 void  __cdecl wrap_SteamAPI_Shutdown(void){
     if (g_cbtHook) { UnhookWindowsHookEx(g_cbtHook); g_cbtHook = NULL; }
     ((PFN_SteamAPI_Shutdown)(void*)p_real[5])();
-}
-int   __cdecl wrap_SteamAPI_Init(void){
-    int r = ((PFN_SteamAPI_Init)(void*)p_real[6])();
-    if (g_jp == 1 && InterlockedCompareExchange(&g_ui_hooks, 1, 0) == 0) install_ui_hooks();
-    return r;
 }
 void  __cdecl wrap_SteamAPI_UnregisterCallback(void* a, int b){ ((PFN_SteamAPI_UnregisterCallback)(void*)p_real[7])(a,b); }
 
@@ -320,6 +319,17 @@ static int scan_int_after(const wchar_t **ps, const wchar_t *lit, int *out) {
     return 1;
 }
 
+static int wbuf_appendf(wchar_t *buf, size_t cap, size_t *pos, const wchar_t *fmt, ...) {
+    if (*pos >= cap) return 0;
+    va_list ap; va_start(ap, fmt);
+    int n = _vsnwprintf(buf + *pos, cap - 1 - *pos, fmt, ap);
+    va_end(ap);
+    if (n < 0) { buf[cap - 1] = 0; *pos = cap - 1; return 0; }
+    *pos += (size_t)n;
+    if (*pos >= cap) { buf[cap - 1] = 0; *pos = cap - 1; }
+    return 1;
+}
+
 static const wchar_t *translate_resolution_msg(const wchar_t *s) {
     static __thread wchar_t buf[1024];
     const wchar_t *p = s;
@@ -328,15 +338,14 @@ static const wchar_t *translate_resolution_msg(const wchar_t *s) {
     if (scan_int_after(&p, L"本作品的最佳匹配分辨率为 ", &w) &&
         scan_int_after(&p, L" × ", &h) &&
         wcsncmp(p, L"。", 1) == 0) {
-        _snwprintf(buf, 1024,
-            L"本作品の最適解像度は %d × %d です。\n\n"
-            L"可能であれば、%d × %d の解像度に設定してください。\n"
-            L"設定できない場合は、最適解像度に近い画面比率を選択してください。\n\n"
-            L"<液晶ディスプレイに関する補足>\n"
-            L"最適解像度に設定しても、表示がぼやけたり粗くなったりすることがあります。\n"
-            L"また、横長・縦長に表示されることがあります。\n"
-            L"これはディスプレイの性能によるものであり、あらかじめご了承ください。\n",
-            w, h, w, h);
+        size_t pos = 0; buf[0] = 0;
+        wbuf_appendf(buf, 1024, &pos, L"本作品の最適解像度は %d × %d です。\n\n", w, h);
+        wbuf_appendf(buf, 1024, &pos, L"可能であれば、%d × %d の解像度に設定してください。\n", w, h);
+        wbuf_appendf(buf, 1024, &pos, L"設定できない場合は、最適解像度に近い画面比率を選択してください。\n\n");
+        wbuf_appendf(buf, 1024, &pos, L"<液晶ディスプレイに関する補足>\n");
+        wbuf_appendf(buf, 1024, &pos, L"最適解像度に設定しても、表示がぼやけたり粗くなったりすることがあります。\n");
+        wbuf_appendf(buf, 1024, &pos, L"また、横長・縦長に表示されることがあります。\n");
+        wbuf_appendf(buf, 1024, &pos, L"これはディスプレイの性能によるものであり、あらかじめご了承ください。\n");
         buf[1023] = 0;
         return buf;
     }
@@ -345,7 +354,8 @@ static const wchar_t *translate_resolution_msg(const wchar_t *s) {
     if (wcsncmp(p, L"分辨率已更改。\n", 8) == 0) {
         p += 8;
         if (scan_int_after(&p, L"", &sec) && wcsstr(p, L"秒后将恢复原本的分辨率")) {
-            _snwprintf(buf, 1024, L"解像度を変更しました。\n%d秒後に元の解像度に戻ります。", sec);
+            size_t pos = 0; buf[0] = 0;
+            wbuf_appendf(buf, 1024, &pos, L"解像度を変更しました。\n%d秒後に元の解像度に戻ります。", sec);
             buf[1023] = 0;
             return buf;
         }
@@ -848,12 +858,16 @@ static void install_gdi_hooks(void) {
     if(!Real_CreateFontIndirectW) Real_CreateFontIndirectW=(PFN_CreateFontIndirectW)(void*)GetProcAddress(g32,"CreateFontIndirectW");
 }
 
-static void choose_language(void) {
+static void choose_language_noninteractive(void) {
     wchar_t test[MAX_PATH]; lstrcpyW(test,g_gameDir); lstrcatW(test,L"\\g00_jp");
     DWORD attr = GetFileAttributesW(test);
     if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) { g_jp = 0; return; }
     if (has_arg("clannad_lang=jp") || has_arg("--clannad-jp") || has_arg("-clannad_jp")) { g_jp = 1; return; }
     if (has_arg("clannad_lang=cn") || has_arg("--clannad-cn") || has_arg("-clannad_cn")) { g_jp = 0; return; }
+}
+
+static void ensure_language_selected(void) {
+    if (g_jp != -1) return;
     int r = MessageBoxW(NULL,
         L"CLANNAD をどちらで起動しますか？\n\n"
         L"「はい」: 日本語版 (g00_jp / dat_jp / mov_jp)\n"
@@ -865,6 +879,16 @@ static void choose_language(void) {
     g_jp = (r == IDYES) ? 1 : 0;
 }
 
+int   __cdecl wrap_SteamAPI_Init(void){
+    ensure_language_selected();
+    int r = ((PFN_SteamAPI_Init)(void*)p_real[6])();
+    if (g_jp == 1 && InterlockedCompareExchange(&g_ui_hooks, 1, 0) == 0) {
+        install_ui_hooks();
+        install_gdi_hooks();
+    }
+    return r;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
     (void)reserved;
     if (reason == DLL_PROCESS_ATTACH) {
@@ -873,12 +897,7 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
         GetModuleFileNameW(NULL, g_gameDir, MAX_PATH); PathRemoveFileSpecW(g_gameDir);
         load_real();
         install_file_hooks();
-        choose_language();
-        if (g_jp == 1) {
-            install_ui_hooks();
-            InterlockedExchange(&g_ui_hooks, 1);
-            install_gdi_hooks();
-        }
+        choose_language_noninteractive();
     } else if (reason == DLL_PROCESS_DETACH) {
         if (g_cbtHook) {
             UnhookWindowsHookEx(g_cbtHook);
