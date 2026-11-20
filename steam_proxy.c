@@ -808,12 +808,21 @@ static void install_file_hooks(void) {
     if(!Real_FindFirstFileA) Real_FindFirstFileA=(PFN_FindFirstFileA)(void*)GetProcAddress(k32,"FindFirstFileA");
 }
 
+static volatile LONG g_msg_hook=0;
+static void install_messagebox_hook(void) {
+    if (InterlockedCompareExchange(&g_msg_hook,1,0)!=0) return;
+    HMODULE exe = GetModuleHandleW(NULL);
+    HMODULE u32 = GetModuleHandleW(L"USER32.dll");
+    iat_hook(exe,"USER32.dll","MessageBoxW",(void*)Hook_MessageBoxW,(void**)(void*)&Real_MessageBoxW);
+    if(!Real_MessageBoxW) Real_MessageBoxW=(PFN_MessageBoxW)(void*)GetProcAddress(u32,"MessageBoxW");
+}
+
 static void install_ui_hooks(void) {
     HMODULE exe = GetModuleHandleW(NULL);
     HMODULE u32 = GetModuleHandleW(L"USER32.dll");
+    install_messagebox_hook();
     iat_hook(exe,"USER32.dll","SetWindowTextW",(void*)Hook_SetWindowTextW,(void**)(void*)&Real_SetWindowTextW);
     iat_hook(exe,"USER32.dll","SetDlgItemTextW",(void*)Hook_SetDlgItemTextW,(void**)(void*)&Real_SetDlgItemTextW);
-    iat_hook(exe,"USER32.dll","MessageBoxW",(void*)Hook_MessageBoxW,(void**)(void*)&Real_MessageBoxW);
     iat_hook(exe,"USER32.dll","DialogBoxIndirectParamW",(void*)Hook_DialogBoxIndirectParamW,(void**)(void*)&Real_DialogBoxIndirectParamW);
     iat_hook(exe,"USER32.dll","DialogBoxParamW",(void*)Hook_DialogBoxParamW,(void**)(void*)&Real_DialogBoxParamW);
     iat_hook(exe,"USER32.dll","CreateDialogIndirectParamW",(void*)Hook_CreateDialogIndirectParamW,(void**)(void*)&Real_CreateDialogIndirectParamW);
@@ -821,7 +830,6 @@ static void install_ui_hooks(void) {
     if(!Real_SetWindowTextW) Real_SetWindowTextW=(PFN_SetWindowTextW)(void*)GetProcAddress(u32,"SetWindowTextW");
     if(!Real_SetDlgItemTextW) Real_SetDlgItemTextW=(PFN_SetDlgItemTextW)(void*)GetProcAddress(u32,"SetDlgItemTextW");
     if(!Real_GetWindowTextW) Real_GetWindowTextW=(PFN_GetWindowTextW)(void*)GetProcAddress(u32,"GetWindowTextW");
-    if(!Real_MessageBoxW) Real_MessageBoxW=(PFN_MessageBoxW)(void*)GetProcAddress(u32,"MessageBoxW");
     if(!Real_DialogBoxIndirectParamW) Real_DialogBoxIndirectParamW=(PFN_DialogBoxIndirectParamW)(void*)GetProcAddress(u32,"DialogBoxIndirectParamW");
     if(!Real_DialogBoxParamW) Real_DialogBoxParamW=(PFN_DialogBoxParamW)(void*)GetProcAddress(u32,"DialogBoxParamW");
     if(!Real_CreateDialogIndirectParamW) Real_CreateDialogIndirectParamW=(PFN_CreateDialogIndirectParamW)(void*)GetProcAddress(u32,"CreateDialogIndirectParamW");
@@ -862,12 +870,14 @@ static void ensure_language_selected(void) {
 }
 
 int   __cdecl wrap_SteamAPI_Init(void){
-    ensure_language_selected();
-    int r = ((PFN_SteamAPI_Init)(void*)p_real[6])();
-    if (g_jp == 1 && InterlockedCompareExchange(&g_ui_hooks, 1, 0) == 0) {
+    choose_language_noninteractive();
+    if (InterlockedCompareExchange(&g_ui_hooks, 1, 0) == 0) {
         install_ui_hooks();
         install_gdi_hooks();
     }
+    ensure_language_selected();
+    if (g_jp == 1) install_file_hooks();
+    int r = ((PFN_SteamAPI_Init)(void*)p_real[6])();
     return r;
 }
 
@@ -878,8 +888,6 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
         DisableThreadLibraryCalls(hinst);
         GetModuleFileNameW(NULL, g_gameDir, MAX_PATH); PathRemoveFileSpecW(g_gameDir);
         load_real();
-        install_file_hooks();
-        choose_language_noninteractive();
     } else if (reason == DLL_PROCESS_DETACH) {
         if (g_cbtHook) {
             UnhookWindowsHookEx(g_cbtHook);

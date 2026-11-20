@@ -36,52 +36,61 @@ DECRYPT2_T0 = bytes([
     0x36,0xBC,0xE5,0x60,0x77,0x68,0x08,0x4F,0xBB,0xAB,0xE2,0x78,0x07,0xE8,0x73,0xBF,
 ])
 
+def _xor_bytes(buf, mask):
+    n=min(len(buf),len(mask))
+    return (int.from_bytes(buf[:n],'little')^int.from_bytes(mask[:n],'little')).to_bytes(n,'little')+buf[n:]
+
 def _crypt1_xor(buf, key):
-    b=bytearray(buf); klen=len(key)
-    for i in range(len(b)): b[i]^=key[i%klen]
-    return bytes(b)
+    klen=len(key)
+    mask=(bytes(key)*((len(buf)//klen)+1))[:len(buf)]
+    return _xor_bytes(buf,mask)
 
 def _c2(buf, table):
-    b=bytearray(buf)
-    for i in range(len(b)): b[i]^=table[i%256]
-    return bytes(b)
+    tbl=bytes(table)
+    mask=(tbl*(len(buf)//256+1))[:len(buf)]
+    return _xor_bytes(buf,mask)
 
 DECRYPT3_K0=(14,199,144,113)
 DECRYPT3_K1=(53,241,155,73)
 DECRYPT3_R=(0,1,1,0,0,0,1,1,0,0,0,1,1,0,0,0,1,1,0,0,1,1,1,0,0,1,1,1,0,0,1,1,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0,0,1,1,0,1,1,1,1,0,1,1,1,1,0,1,1,1,1,1,1,0,0,1,1,1,0,0,1,1,1,0,0,1)
+_crypt3_keys=tuple((DECRYPT3_K1 if DECRYPT3_R[r] else DECRYPT3_K0) for r in range(len(DECRYPT3_R)))
+_CRYPT3_PERIOD=len(_crypt3_keys)*4
+_CRYPT3_MASK=bytes(_crypt3_keys[(i>>2)%len(_crypt3_keys)][i&3] for i in range(_CRYPT3_PERIOD))
+def _crypt3_mask(n):
+    full=n//_CRYPT3_PERIOD
+    return _CRYPT3_MASK*full+_CRYPT3_MASK[:n%_CRYPT3_PERIOD]
 
 def _crypt3(buf):
-    b=bytearray(buf); kindex=0; rindex=0
-    for i in range(len(b)):
-        key=DECRYPT3_K1 if DECRYPT3_R[rindex] else DECRYPT3_K0
-        b[i]^=key[kindex]; kindex+=1
-        if kindex>3:
-            kindex=0; rindex+=1
-            if rindex>=len(DECRYPT3_R): rindex=0
-    return bytes(b)
+    return _xor_bytes(buf,_crypt3_mask(len(buf)))
 
 def lzss_decompress(src, tolerant=True):
     arc_size, org_size = struct.unpack('II', src[:8])
-    out=bytearray(); pos=8; end=min(arc_size,len(src))
+    out=bytearray(); pos=8; end=min(arc_size,len(src));
+    append=out.append; ln_out=len
     try:
-        while len(out)<org_size and pos<end:
+        while ln_out(out)<org_size and pos<end:
             flags=src[pos]; pos+=1
             for _ in range(8):
-                if len(out)>=org_size or pos>=end: raise StopIteration
+                olen=ln_out(out)
+                if olen>=org_size or pos>=end: raise StopIteration
                 if flags&1:
-                    out.append(src[pos]); pos+=1
+                    append(src[pos]); pos+=1
                 else:
                     if pos+2>end: raise StopIteration
                     token=src[pos]|(src[pos+1]<<8); pos+=2
                     off=token>>4; ln=(token&0xF)+2
-                    if off==0 or off>len(out): raise StopIteration
-                    for _ in range(ln):
-                        if len(out)>=org_size: break
-                        out.append(out[len(out)-off])
+                    if off==0 or off>olen: raise StopIteration
+                    if ln>org_size-olen: ln=org_size-olen
+                    srcpos=olen-off
+                    if off>=ln:
+                        out+=out[srcpos:srcpos+ln]
+                    else:
+                        pat=out[srcpos:olen]
+                        out+=(pat*((ln//off)+1))[:ln]
                 flags>>=1
     except StopIteration:
         pass
-    if len(out)<org_size: out+=b'\x00'*(org_size-len(out))
+    if ln_out(out)<org_size: out+=b'\x00'*(org_size-ln_out(out))
     return bytes(out[:org_size])
 
 def lzss_compress_literals(data):
@@ -125,8 +134,12 @@ def lzss_compress(data, literal_size=1, max_chain_scan=64):
     key_bytes=3 if bgra_indexing else 2
     buckets=defaultdict(list); out=bytearray(); flag_pos=None; bit=8
     n=len(data); dw_total=n//3; good_enough=max_units-4
+    if bgra_indexing:
+        def key_at(p): return (data[p]<<16)|(data[p+1]<<8)|data[p+2]
+    else:
+        def key_at(p): return (data[p]<<8)|data[p+1]
     def record(pos):
-        if pos>=unit and pos+key_bytes<=n: buckets[data[pos:pos+key_bytes]].append(pos)
+        if pos>=unit and pos+key_bytes<=n: buckets[key_at(pos)].append(pos)
     def new_block():
         nonlocal flag_pos,bit; flag_pos=len(out); out.append(0); bit=0
     if data: new_block()
@@ -135,7 +148,7 @@ def lzss_compress(data, literal_size=1, max_chain_scan=64):
         if bit==8: new_block()
         best_off=0; best_len=0
         if ptr>=(3 if bgra_indexing else 1) and ptr+key_bytes<=n:
-            key=data[ptr:ptr+key_bytes]; chain=buckets.get(key)
+            key=key_at(ptr); chain=buckets.get(key)
             if chain:
                 i=bisect_left(chain, ptr-max_off); j=len(chain)
                 if j-i>max_chain_scan: i=j-max_chain_scan
@@ -151,12 +164,13 @@ def lzss_compress(data, literal_size=1, max_chain_scan=64):
                     for k in range(j-1,i-1,-1):
                         cand_pos=chain[k]; off=ptr-cand_pos
                         if bgra_indexing and (off%3 or off<3): continue
-                        if data[cand_pos:cand_pos+stop_b]==data[ptr:p2]: m=stop_b
+                        target=data[ptr:p2]
+                        if data.startswith(target,cand_pos): m=stop_b
                         else:
                             lo_,hi_=0,stop_b
                             while lo_<hi_:
                                 mid=(lo_+hi_+1)>>1
-                                if data[cand_pos:cand_pos+mid]==data[ptr:ptr+mid]: lo_=mid
+                                if data.startswith(target[:mid],cand_pos): lo_=mid
                                 else: hi_=mid-1
                             m=lo_
                         n_units=m//unit
@@ -189,29 +203,29 @@ class Dbs:
         off=self.line_index_offset
         self.line_index=list(struct.unpack('%di'%self.line_count, blob[off:off+self.line_count*4]))
         off=self.data_format_offset
-        self.data_index=[]; self.data_type=[]
-        for _ in range(self.data_count):
-            idx,ty=struct.unpack('II',blob[off:off+8]); off+=8
-            self.data_index.append(idx); self.data_type.append(ty)
+        fmts=struct.unpack('%dI'%(self.data_count*2), blob[off:off+self.data_count*8])
+        self.data_index=list(fmts[0::2]); self.data_type=list(fmts[1::2])
         off=self.line_data_index_offset
         raw=struct.unpack('%dI'%(self.line_count*self.data_count), blob[off:off+self.line_count*self.data_count*4])
-        self.rows=[]
+        types=self.data_type; dc=self.data_count; toff=self.text_offset
+        strcols=[n for n in range(dc) if types[n]==0x53]
+        rows=[]
         for m in range(self.line_count):
-            row=[]
-            for n in range(self.data_count):
-                v=raw[m*self.data_count+n]
-                if self.data_type[n]==0x53:
-                    p=self.text_offset+v
-                    if is_utf:
-                        end=blob.index(b'\x00\x00',p)
-                        if (end-p)%2: end+=1
-                        row.append(blob[p:end].decode('utf-16-le','replace'))
-                    else:
-                        end=blob.index(b'\x00',p)
-                        row.append(blob[p:end].decode('cp932','replace'))
+            base=m*dc
+            row=[raw[base+n] for n in range(dc)]
+            for n in strcols:
+                p=toff+raw[base+n]
+                if is_utf:
+                    end=blob.find(b'\x00\x00',p)
+                    if end<0: end=len(blob)
+                    if (end-p)&1: end+=1
+                    row[n]=blob[p:end].decode('utf-16-le','replace')
                 else:
-                    row.append(v)
-            self.rows.append(row)
+                    end=blob.find(b'\x00',p)
+                    if end<0: end=len(blob)
+                    row[n]=blob[p:end].decode('cp932','replace')
+            rows.append(row)
+        self.rows=rows
     def to_blob(self):
         strings=[]; offsets={}
         for m in range(self.line_count):
@@ -241,12 +255,15 @@ class Dbs:
         blob+=b'\x00'*pad
         return bytes(blob)
 
-def decrypt_dbs(path):
-    raw=Path(path).read_bytes(); is_utf = raw[:4]!=b'\x00\x00\x00\x00'
+def decrypt_dbs_bytes(raw):
+    is_utf = raw[:4]!=b'\x00\x00\x00\x00'
     body=_crypt1_xor(raw[4:], DBS_KEY)
     comp,decomp=struct.unpack('II',body[:8])
     data=lzss_decompress(body[:8]+body[8:comp], tolerant=True)
     return is_utf,_crypt3(data)
+
+def decrypt_dbs(path):
+    return decrypt_dbs_bytes(Path(path).read_bytes())
 
 def encrypt_dbs(blob, is_utf=True):
     data=lzss_compress_literals(_crypt3(blob))
@@ -287,7 +304,10 @@ SCENE_PATCH = {
     },
 }
 
-def load_cn2jp(game):
+_cn2jp_cache={}
+def load_cn2jp(game, force=False):
+    key=str(game)
+    if not force and key in _cn2jp_cache: return _cn2jp_cache[key]
     out={}
     for p in sorted((game/'dat').glob('*.dbs')):
         try:
@@ -299,6 +319,7 @@ def load_cn2jp(game):
             jp,cn=row[c0],row[c2]
             if isinstance(jp,str) and jp and isinstance(cn,str) and cn and jp!=cn:
                 out.setdefault(cn,jp)
+    _cn2jp_cache[key]=out
     return out
 
 def resolve_scene_text(new_text, cn2jp):
@@ -457,9 +478,14 @@ class ScenePck:
             offset+=len(blob)
         return self.raw[:self.info_offset]+b''.join(entries)+b''.join(blobs)+self.tail
 
-def build_scene_jp(src,out,log=print,cn2jp=None):
+def build_scene_jp(src,out,log=print,cn2jp=None,force=False):
     src,out=Path(src),Path(out)
     if not src.is_file(): raise RuntimeError('SceneZH.pckが見つかりません: %s'%src)
+    if not force and out.exists():
+        om=out.stat().st_mtime
+        if om>=src.stat().st_mtime and om>=Path(__file__).stat().st_mtime:
+            log('[scene] %s: up-to-date, skipping'%out.name)
+            return False
     original=src.read_bytes()
     pck=ScenePck(original)
     log('[scene] %s: %dシーン / 未参照データ %d bytes保持'%(src.name,pck.count,len(pck.tail)))
@@ -586,13 +612,9 @@ def convert_dbs(path):
             row[c2]=row[c0]; changed+=1
     if changed==0: return None,0,warn
     out=encrypt_dbs(d.to_blob(), is_utf)
-    fd,tmp=tempfile.mkstemp(suffix='.dbs'); os.close(fd)
-    Path(tmp).write_bytes(out)
-    u2,b2=decrypt_dbs(tmp); os.unlink(tmp)
-    d2=Dbs(b2,u2); c02=d2.data_index.index(JP); c22=d2.data_index.index(CN)
-    for rr,row in enumerate(d2.rows):
-        if row[c02]=='' and row[c22]!='': continue
-        if row[c22]!=row[c02]:
+    for rr,row in enumerate(d.rows):
+        if row[c0]=='' and row[c2]!='': continue
+        if row[c2]!=row[c0]:
             raise RuntimeError('DBS JP/CN mismatch: %s row %d' % (name, rr+1))
     return out,changed,warn
 
@@ -758,16 +780,20 @@ def ensure_font(game):
 OP_YOUTUBE_URL = 'https://www.youtube.com/watch?v=tCV7yyImQFk'
 
 def _find_ffmpeg():
-    """Find ffmpeg binary: prefer imageio_ffmpeg package, fall back to PATH."""
+    """Find ffmpeg binary: prefer system PATH, fall back to imageio_ffmpeg package."""
+    found = shutil.which('ffmpeg')
+    if found: return found
     try:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
     except ImportError:
         pass
-    return shutil.which('ffmpeg')
+    return None
 
 def _find_ffprobe():
-    """Find ffprobe binary: check next to imageio_ffmpeg's ffmpeg, then PATH."""
+    """Find ffprobe binary: prefer system PATH, then next to imageio_ffmpeg's ffmpeg."""
+    found = shutil.which('ffprobe')
+    if found: return found
     try:
         import imageio_ffmpeg
         ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
@@ -776,35 +802,36 @@ def _find_ffprobe():
             return str(candidate)
     except ImportError:
         pass
-    return shutil.which('ffprobe')
+    return None
 
 def _download_youtube(url, output_path, ffmpeg):
-    """Download video: prefer yt_dlp library, fall back to yt-dlp CLI."""
-    # Try Python library first
+    """Download video: prefer system yt-dlp CLI, fall back to yt_dlp library."""
+    ffmpeg_dir = str(Path(ffmpeg).parent) if ffmpeg else None
+    # Prefer the system yt-dlp CLI so system ffmpeg/ffprobe are used consistently
+    yt_dlp_bin = shutil.which('yt-dlp')
+    if yt_dlp_bin:
+        cmd = [yt_dlp_bin]
+        if ffmpeg_dir: cmd += ['--ffmpeg-location', ffmpeg_dir]
+        cmd += ['-f', 'bestvideo[height<=720]+bestaudio/best[height<=720]',
+                '--merge-output-format', 'mkv', '-o', str(output_path), url]
+        r = subprocess.run(cmd)
+        if r.returncode == 0: return True
+    # Fall back to the yt_dlp library (same ffmpeg location)
     try:
         import yt_dlp
         ydl_opts = {
             'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
             'merge_output_format': 'mkv',
-            'ffmpeg_location': ffmpeg,
             'outtmpl': str(output_path),
             'quiet': False,
         }
+        if ffmpeg_dir: ydl_opts['ffmpeg_location'] = ffmpeg_dir
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         return True
     except ImportError:
         pass
-    # Fall back to CLI
-    yt_dlp_bin = shutil.which('yt-dlp')
-    if not yt_dlp_bin:
-        return None  # not available at all
-    r = subprocess.run([yt_dlp_bin,
-                        '--ffmpeg-location', ffmpeg,
-                        '-f', 'bestvideo[height<=720]+bestaudio/best[height<=720]',
-                        '--merge-output-format', 'mkv',
-                        '-o', str(output_path), url])
-    return r.returncode == 0
+    return False
 
 def _has_ytdlp():
     """Check if yt-dlp is available (library or CLI)."""
@@ -968,7 +995,7 @@ UI_SPEC = {
  {"box":[704,168,1110,199],"text":"日付ウィンドウを表示する","size":20},
  {"box":[704,219,1110,249],"db":"text22.dbs:267","size":20},
  {"box":[704,271,1110,301],"db":"text20.dbs:120","size":20},
- {"box":[704,324,1110,354],"db":"text20.dbs:118","size":20},
+ {"box":[704,312,1110,362],"lines":["本プログラムの動作を遅くして、","他のプログラムがスムーズに動作するようにする"],"size":16,"line_gap":20,"cy_base":321},
  {"box":[704,376,1110,406],"db":"text20.dbs:119","size":20},
  {"box":[704,429,1110,459],"text":"クリックで画面暗転をスキップする","size":20}
 ]},
@@ -1267,7 +1294,8 @@ def apply_item(img,it,fpath,log,refimg=None,clean=None):
     if not xs: return False
     bx0,bx1,by0,by1=min(xs),max(xs)+1,min(ys),max(ys)+1
     erase_text(img,mask,(x0,y0,x1,y1),rows,it.get('grow',1),cpx)
-    text=it['text']; size=it.get('size') or max(10, round((by1-by0)/0.88)); maxw=it.get('maxw',x1-x0)
+    lines=it.get('lines')
+    text=it.get('text', lines[0] if lines else ''); size=it.get('size') or max(10, round((by1-by0)/0.88)); maxw=it.get('maxw',x1-x0)
     f=get_font(fpath,size)
     while size>9 and f.getlength(text)>maxw:
         size-=1; f=get_font(fpath,size)
@@ -1275,7 +1303,22 @@ def apply_item(img,it,fpath,log,refimg=None,clean=None):
     if align=='center': x=(bx0+bx1)/2-w/2
     elif align=='right': x=bx1-w
     else: x=bx0
-    x+=it.get('dx',0); cy=(by0+by1)/2+it.get('dy',0)
+    x+=it.get('dx',0)
+    if lines:
+        text=lines[0]
+        cy=it.get('cy_base',(by0+by1)/2)
+        line_gap=it.get('line_gap',round(size*1.15))
+        f0=get_font(fpath,size)
+        w=max(f0.getlength(l) for l in lines)
+        lx=(bx0+bx1)/2-w/2 if align=='center' else (bx1-w if align=='right' else bx0)
+        lx+=it.get('dx',0)
+        color=tuple(it.get('color') or (255,255,255)); sc0=tuple(it.get('stroke_color') or (40,100,210))+(255,)
+        sw0=1 if it.get('stroke')=='auto' else it.get('stroke',0)
+        draw=ImageDraw.Draw(img)
+        for li,l in enumerate(lines):
+            draw.text((lx,cy+li*line_gap),l,font=f0,fill=color+(255,),anchor='lm',stroke_width=sw0,stroke_fill=sc0)
+        return True
+    cy=(by0+by1)/2+it.get('dy',0)
     color=it.get('color') or (255,255,255); mode_stroke=None; layers3=None
     if color=='auto':
         if cpx is not None:
@@ -1343,6 +1386,8 @@ def process_ui_file(ent, game, out_dir, fpath, log):
     if not src.exists():
         log(f'  [ui] {name}: source missing'); return False
     dst=out_dir/(name+'.g00')
+    if dst.exists() and dst.stat().st_mtime>=src.stat().st_mtime and dst.stat().st_mtime>=Path(__file__).stat().st_mtime:
+        return False
     try:
         obj=load_g00(src.read_bytes())
     except Exception as e:
@@ -1355,6 +1400,8 @@ def process_ui_file(ent, game, out_dir, fpath, log):
         for raw in ent['items']:
             if c not in raw.get('cuts',[c]): continue
             it=resolve_text(game,raw)
+            if it.get('lines'):
+                it=dict(it); it['lines']=[resolve_text(game,l)['text'] if isinstance(l,dict) else l for l in it['lines']]
             try:
                 if apply_item(img,it,fpath,log,get_ref_img(game,it,c),get_clean_img(game,it,c,img.size,log)): ok=True
             except Exception as e:
