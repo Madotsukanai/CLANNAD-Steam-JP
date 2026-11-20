@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <shlwapi.h>
 
 static HINSTANCE g_hInst = NULL;
@@ -155,154 +156,134 @@ static int has_arg(const char *name) {
 }
 
 typedef struct { const wchar_t *cn; const wchar_t *jp; } StrMap;
-static const StrMap kStrMap[] = {
-    { L"要更改字体吗？\n\n※若选择“否”，将不会显示文字。", L"フォントを変更しますか？\n\n※「いいえ」を選択すると、文字は表示されません。" },
-    { L"未发现字体。（或字体已损坏。）\n\n\u3000\u3000现在的字体：", L"フォントが見つかりません。（またはフォントが破損しています。）\n\n\u3000\u3000現在のフォント：" },
-    { L"现在的字体：", L"現在のフォント：" },
-    { L"现在的字体 :", L"現在のフォント：" },
-    { L"字体：", L"フォント：" },
-    { L"字体 :", L"フォント：" },
-    { L"字体设置", L"フォント設定" },
-    { L"字体设定", L"フォント設定" },
-    { L"字体选择", L"フォント選択" },
-    { L"选择字体", L"フォント選択" },
-    { L"更改字体", L"フォント変更" },
-    { L"变更字体", L"フォント変更" },
-    { L"显示比例字体", L"プロポーショナルフォントを表示" },
-    { L"顯示比例字體", L"プロポーショナルフォントを表示" },
-    { L"※使用比例字体可能导致文本排版显示的异常。", L"※プロポーショナルフォントを使用すると表示が崩れる場合があります。" },
-    { L"※使用比例字體可能導致文本排版顯示的異常。", L"※プロポーショナルフォントを使用すると表示が崩れる場合があります。" },
-    { L"文字加粗", L"太字" },
-    { L"无阴影", L"影なし" },
-    { L"無陰影", L"影なし" },
-    { L"有阴影", L"影あり" },
-    { L"有陰影", L"影あり" },
-    { L"显示文字描边", L"縁取り" },
-    { L"顯示文字描邊", L"縁取り" },
-    { L"描边+阴影", L"縁取り＋影" },
-    { L"描邊+陰影", L"縁取り＋影" },
-    { L"“请不要将天堂…分开”", L"「天国をふたつに、わけないでください」" },
-    { L"“请不要将天堂...分开”", L"「天国をふたつに、わけないでください」" },
-    { L"“請不要將天堂…分開”", L"「天国をふたつに、わけないでください」" },
-    { L"“請不要將天堂...分開”", L"「天国をふたつに、わけないでください」" },
-    { L"请不要将天堂…分开", L"天国をふたつに、わけないでください" },
-    { L"请不要将天堂...分开", L"天国をふたつに、わけないでください" },
-    { L"請不要將天堂…分開", L"天国をふたつに、わけないでください" },
-    { L"請不要將天堂...分開", L"天国をふたつに、わけないでください" },
-    { L"環境設置", L"環境設定" },
-    { L"縮短播放時間（快進聲音）設置", L"再生時間短縮（音声早送り）設定" },
-    { L"??播放方式?置", L"ムービー再生方法設定" },
-    { L"對話框背景?色設置", L"ウィンドウ背景色設定" },
-    { L"畫面設置", L"画面設定" },
-    { L"系統設置", L"システム設定" },
-    { L"推特", L"Twitter" },
-    { L"影片播放设置", L"ムービー再生設定" },
-    { L"影片播放设定", L"ムービー再生設定" },
-    { L"影片播放方式", L"ムービー再生方法" },
-    { L"影片播放方式设置", L"ムービー再生方法設定" },
-    { L"视频播放方式设定", L"ムービー再生方法設定" },
-    { L"影片播放", L"ムービー再生" },
-    { L"视频播放设置", L"ムービー再生設定" },
-    { L"视频播放设定", L"ムービー再生設定" },
-    { L"视频播放方式", L"ムービー再生方法" },
-    { L"视频播放方式设置", L"ムービー再生方法設定" },
-    { L"该设置可以更改视频播放方式。游戏过程中，如果无法正常播放视频，请更改该设置。\n※如果没有问题，请继续设置为「Windows Media Player」。", L"この設定でムービーの再生方法を変更できます。ゲーム中に正常に再生できない場合は、設定を変更してください。\n※問題がなければ、「Windows Media Player」のままにしてください。" },
-    { L"如果设置为「Windows Media Player」，需要 Windows Media Player 9 以上的版本。\n※因使用配置不同，可能无法正常运行。", L"「Windows Media Player」に設定する場合は、Windows Media Player 9 以上が必要です。\n※環境によっては正常に動作しない場合があります。" },
-    { L"該設置可以更改影片播放方式。遊戲過程中，如果無法正常播放影片，請更改該設置。\n※如果沒有問題，請繼續設置為「Windows Media Player」。", L"この設定でムービーの再生方法を変更できます。ゲーム中に正常に再生できない場合は、設定を変更してください。\n※問題がなければ、「Windows Media Player」のままにしてください。" },
-    { L"如果設置為「Windows Media Player」，需要Windows Media Player 9以上の版本。\n※因使用配置不同，可能無法正常運行。", L"「Windows Media Player」に設定する場合は、Windows Media Player 9 以上が必要です。\n※環境によっては正常に動作しない場合があります。" },
-    { L"Windows Media Player (标准)", L"Windows Media Player（標準）" },
-    { L"Windows Media Player (標準)", L"Windows Media Player（標準）" },
-    { L"确定", L"OK" },
-    { L"確定", L"OK" },
-    { L"取消", L"キャンセル" },
-    { L"关闭", L"閉じる" },
-    { L"關閉", L"閉じる" },
-    { L"是(&Y)", L"はい(&Y)" },
-    { L"否(&N)", L"いいえ(&N)" },
-    { L"非(&N)", L"いいえ(&N)" },
-    { L"是(&&Y)", L"はい(&&Y)" },
-    { L"否(&&N)", L"いいえ(&&N)" },
-    { L"是 (&Y)", L"はい (&Y)" },
-    { L"否 (&N)", L"いいえ (&N)" },
-    { L"是 (Y)", L"はい (Y)" },
-    { L"否 (N)", L"いいえ (N)" },
-    { L"是(Y)", L"はい(Y)" },
-    { L"否(N)", L"いいえ(N)" },
-    { L"非(N)", L"いいえ(N)" },
-    { L"是（Y）", L"はい（Y）" },
-    { L"否（N）", L"いいえ（N）" },
-    { L"&Yes", L"はい(&Y)" },
-    { L"&No", L"いいえ(&N)" },
-    { L"Yes", L"はい" },
-    { L"No", L"いいえ" },
-    { L"是", L"はい" },
-    { L"否", L"いいえ" },
-    { L"非", L"いいえ" },
-    { L"画面设置", L"画面設定" },
-    { L"畫面設置", L"画面設定" },
-    { L"画面模式", L"画面モード" },
-    { L"畫面模式", L"画面モード" },
-    { L"全屏幕", L"フルスクリーン" },
-    { L"全螢幕", L"フルスクリーン" },
-    { L"窗口", L"ウィンドウ" },
-    { L"視窗", L"ウィンドウ" },
-    { L"窗口尺寸", L"ウィンドウサイズ" },
-    { L"全屏分辨率", L"フルスクリーン解像度" },
-    { L"全屏详细设置", L"フルスクリーン詳細設定" },
-    { L"显示模式", L"表示モード" },
-    { L"顯示模式", L"表示モード" },
-    { L"显示 : ", L"表示 : " },
-    { L"顯示 : ", L"表示 : " },
-    { L"分辨率 : ", L"解像度 : " },
-    { L"解析度 : ", L"解像度 : " },
-    { L"更改分辨率", L"解像度変更" },
-    { L"更改解析度", L"解像度変更" },
-    { L"关于分辨率", L"解像度について" },
-    { L"關於解析度", L"解像度について" },
-    { L"原尺寸", L"原寸" },
-    { L"匹配全屏幕", L"画面全体に拡大" },
-    { L"匹配上下画面", L"上下に合わせる" },
-    { L"匹配左右画面", L"左右に合わせる" },
-    { L"自定义设置", L"カスタム設定" },
-    { L"自定義設置", L"カスタム設定" },
-    { L"同步倍率", L"倍率を同期" },
-    { L"上下移动 : ", L"上下移動 : " },
-    { L"上下移動 ：", L"上下移動 ：" },
-    { L"左右移动 : ", L"左右移動 : " },
-    { L"左右移動 ：", L"左右移動 ：" },
-    { L"恢复原始设置", L"初期設定に戻す" },
-    { L"恢復原始設置", L"初期設定に戻す" },
-    { L"恢復原始設定", L"初期設定に戻す" },
-    { L"环境设置", L"環境設定" },
-    { L"系统设置", L"システム設定" },
-    { L"对话框背景颜色", L"ウィンドウ背景色" },
-    { L"對話框背景?色", L"ウィンドウ背景色" },
-    { L"对话框背景颜色设置", L"ウィンドウ背景色設定" },
-    { L"透明度", L"透明度" },
-    { L"全部初始化", L"すべて初期化" },
-    { L"缩短播放时间（快进声音）", L"再生時間短縮（音声早送り）" },
-    { L"縮短播放時間（快進聲音）", L"再生時間短縮（音声早送り）" },
-    { L"缩短播放时间（快进声音）设置", L"再生時間短縮（音声早送り）設定" },
-    { L"标准", L"標準" },
-    { L"更改正常阅读文本的播放速度", L"通常のテキスト再生速度を変更" },
-    { L"更改正常閱讀文本的播放速度", L"通常のテキスト再生速度を変更" },
-    { L"更改自动模式时的播放速度", L"オートモード時の再生速度を変更" },
-    { L"更改自動模式時的播放速度", L"オートモード時の再生速度を変更" },
-    { L"更改重播声音时的播放速度", L"音声リプレイ時の再生速度を変更" },
-    { L"更改重播聲音時的播放速度", L"音声リプレイ時の再生速度を変更" },
-    { L"音量设置", L"音量設定" },
-    { L"文本设置", L"テキスト設定" },
-    { L"文字速度设置", L"文字速度設定" },
-    { L"声音设定", L"音声設定" },
-    { L"声音模式设定", L"音声モード設定" },
-    { L"角色语音设定", L"キャラクターボイス設定" },
-    { L"BGM淡出设置", L"BGMフェードアウト設定" },
-    { L"（当前分辨率）", L"（現在の解像度）" },
-    { L"（原分辨率）", L"（元の解像度）" },
-    { L"将更改画面分辨率。\n\n<注意>\n因分辨率不同，可能会出现画面闪烁的状况。\n更改分辨率后，如果画面仍未正常显示，请耐心等待。\n20 秒后将会恢复到原来的设置状态。\n\n<有关液晶显示器的说明>\n更改分辨率时，可能会出现黑屏现象。\n这种情况是由于显示器无法正常收到信号，切换到无信号状态后导致的。\n重启显示器电源后即可正常显示。",
-      L"画面の解像度を変更します。\n\n<注意>\n解像度の違いにより、画面がちらつくことがあります。\n解像度変更後、画面が正常に表示されない場合は、しばらくお待ちください。\n20秒後に元の設定に戻ります。\n\n<液晶ディスプレイに関する説明>\n解像度の変更時、画面が真っ黒になることがあります。\nこれはディスプレイが正常に信号を受信できず、ノー信号状態に切り替わるために起こるものです。\nディスプレイの電源を入れ直せば正常に表示されます。" },
-    { NULL, NULL }
-};
+
+static const unsigned char DBS_KEY[4]={0x2D,0x62,0xF4,0x89};
+static const unsigned char DK0[4]={14,199,144,113};
+static const unsigned char DK1[4]={53,241,155,73};
+static const unsigned char DR[96]={
+ 0,1,1,0,0,0,1,1,0,0,0,1,1,0,0,0,1,1,0,0,1,1,1,0,0,1,1,1,0,0,1,1,
+ 0,0,0,1,0,0,0,0,1,0,0,0,0,1,0,0,1,1,0,1,1,1,1,0,1,1,1,1,0,1,1,1,
+ 1,1,1,1,0,0,1,1,1,0,0,1,1,1,0,0,1};
+
+static void xor_cycle(unsigned char *p, size_t n, const unsigned char *k, size_t kl) {
+    for (size_t i=0;i<n;i++) p[i]^=k[i%kl];
+}
+static void crypt3(unsigned char *p, size_t n) {
+    size_t ki=0,ri=0;
+    for (size_t i=0;i<n;i++) {
+        p[i]^=(DR[ri]?DK1:DK0)[ki];
+        if (++ki>3) { ki=0; if (++ri>=96) ri=0; }
+    }
+}
+static unsigned char *lzss_dec(const unsigned char *src, size_t n, size_t *out_n) {
+    if (n<8) return NULL;
+    unsigned int arc=src[0]|src[1]<<8|src[2]<<16|(unsigned int)src[3]<<24;
+    unsigned int org=src[4]|src[5]<<8|src[6]<<16|(unsigned int)src[7]<<24;
+    if (org==0 || org>64u*1024u*1024u) return NULL;
+    unsigned char *out=(unsigned char*)malloc(org); if (!out) return NULL;
+    size_t pos=8, end=arc<n?arc:n, o=0;
+    while (o<org && pos<end) {
+        unsigned char flags=src[pos++];
+        for (int bit=0;bit<8 && o<org && pos<end;bit++,flags>>=1) {
+            if (flags&1) { out[o++]=src[pos++]; continue; }
+            if (pos+2>end) { o=org; break; }
+            unsigned int tok=src[pos]|(src[pos+1]<<8); pos+=2;
+            unsigned int off=tok>>4, len=(tok&0xF)+2;
+            if (!off || off>o) { o=org; break; }
+            for (unsigned int j=0;j<len && o<org;j++) out[o]=out[o-off],o++;
+        }
+    }
+    while (o<org) out[o++]=0;
+    *out_n=org; return out;
+}
+
+static StrMap *g_map=NULL;
+static size_t g_map_n=0;
+static volatile LONG g_map_loaded=0;
+
+static wchar_t *utf16_to_w(const unsigned char *p, size_t n) {
+    size_t len=n/2;
+    if (len>4096) len=4096;
+    wchar_t *w=(wchar_t*)malloc((len+1)*sizeof(wchar_t));
+    if (!w) return NULL;
+    for (size_t i=0;i<len;i++) w[i]=(wchar_t)(p[i*2]|p[i*2+1]<<8);
+    w[len]=0; return w;
+}
+
+static void load_dbs_map(const wchar_t *path) {
+    HANDLE h=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,0,NULL);
+    if (h==INVALID_HANDLE_VALUE) return;
+    DWORD sz=GetFileSize(h,NULL);
+    if (sz==0 || sz>128u*1024u*1024u) { CloseHandle(h); return; }
+    unsigned char *raw=(unsigned char*)malloc(sz);
+    DWORD rd=0;
+    if (!raw || !ReadFile(h,raw,sz,&rd,NULL) || rd!=sz) { free(raw); CloseHandle(h); return; }
+    CloseHandle(h);
+    int is_utf = !(raw[0]==0 && raw[1]==0 && raw[2]==0 && raw[3]==0);
+    size_t body_n=sz-4;
+    xor_cycle(raw+4,body_n,DBS_KEY,4);
+    if (body_n<8) { free(raw); return; }
+    unsigned int comp=raw[4]|raw[5]<<8|raw[6]<<16|(unsigned int)raw[7]<<24;
+    if (comp>body_n) { free(raw); return; }
+    size_t dsz=0;
+    unsigned char *dec=lzss_dec(raw+4,comp,&dsz);
+    free(raw);
+    if (!dec) return;
+    crypt3(dec,dsz);
+    if (dsz<28) { free(dec); return; }
+    unsigned int line_count,data_count,li_off,df_off,ldi_off,text_off;
+    line_count=dec[4]|dec[5]<<8|dec[6]<<16|(unsigned int)dec[7]<<24;
+    data_count=dec[8]|dec[9]<<8|dec[10]<<16|(unsigned int)dec[11]<<24;
+    li_off=dec[12]|dec[13]<<8|dec[14]<<16|(unsigned int)dec[15]<<24;
+    df_off=dec[16]|dec[17]<<8|dec[18]<<16|(unsigned int)dec[19]<<24;
+    ldi_off=dec[20]|dec[21]<<8|dec[22]<<16|(unsigned int)dec[23]<<24;
+    text_off=dec[24]|dec[25]<<8|dec[26]<<16|(unsigned int)dec[27]<<24;
+    if (!line_count || !data_count || data_count>64 || line_count>200000 ||
+        li_off+line_count*4>dsz || df_off+data_count*8>dsz ||
+        ldi_off+line_count*data_count*4>dsz || text_off>dsz) { free(dec); return; }
+    if (!is_utf) { free(dec); return; }
+    int ci=-1,zi=-1;
+    for (unsigned int n=0;n<data_count;n++) {
+        unsigned int idx=dec[df_off+n*8]|dec[df_off+n*8+1]<<8|dec[df_off+n*8+2]<<16|(unsigned int)dec[df_off+n*8+3]<<24;
+        unsigned int ty=dec[df_off+n*8+4]|dec[df_off+n*8+5]<<8|dec[df_off+n*8+6]<<16|(unsigned int)dec[df_off+n*8+7]<<24;
+        if (ty==0x53 && idx==0) ci=(int)n;
+        if (ty==0x53 && idx==2) zi=(int)n;
+    }
+    if (ci<0 || zi<0) { free(dec); return; }
+    StrMap *arr=(StrMap*)realloc(g_map,(g_map_n+(size_t)line_count+1)*sizeof(StrMap));
+    if (!arr) { free(dec); return; }
+    g_map=arr;
+    for (unsigned int m=0;m<line_count;m++) {
+        unsigned int vo=ldi_off+(m*data_count+ci)*4, zo=ldi_off+(m*data_count+zi)*4;
+        unsigned int v=dec[vo]|dec[vo+1]<<8|dec[vo+2]<<16|(unsigned int)dec[vo+3]<<24;
+        unsigned int z=dec[zo]|dec[zo+1]<<8|dec[zo+2]<<16|(unsigned int)dec[zo+3]<<24;
+        size_t vp=text_off+v, zp=text_off+z;
+        if (vp>=dsz || zp>=dsz) continue;
+        size_t vl=0,zl=0;
+        while (vp+vl+1<dsz && !(dec[vp+vl]==0 && dec[vp+vl+1]==0)) vl+=2;
+        while (zp+zl+1<dsz && !(dec[zp+zl]==0 && dec[zp+zl+1]==0)) zl+=2;
+        if (!vl || !zl) continue;
+        wchar_t *cn=utf16_to_w(dec+zp,zl), *jp=utf16_to_w(dec+vp,vl);
+        if (!cn || !jp || lstrcmpW(cn,jp)==0) { free(cn); free(jp); continue; }
+        g_map[g_map_n].cn=cn; g_map[g_map_n].jp=jp; g_map_n++;
+    }
+    free(dec);
+}
+
+static void ensure_map_loaded(void) {
+    if (InterlockedCompareExchange(&g_map_loaded,1,0)!=0) return;
+    static const wchar_t *names[]={L"text20.dbs",L"text22.dbs",L"text23.dbs",NULL};
+    wchar_t path[MAX_PATH];
+    for (int i=0;names[i];i++) {
+        lstrcpyW(path,g_gameDir); lstrcatW(path,L"\\dat\\"); lstrcatW(path,names[i]);
+        load_dbs_map(path);
+        lstrcpyW(path,g_gameDir); lstrcatW(path,L"\\dat_jp\\"); lstrcatW(path,names[i]);
+        load_dbs_map(path);
+    }
+    g_map=realloc(g_map,(g_map_n+1)*sizeof(StrMap));
+    if (g_map) { g_map[g_map_n].cn=NULL; g_map[g_map_n].jp=NULL; }
+}
+
 
 /* "…prefix…<数値> × <数値>…" のように数値を挟む文字列を照合・読み取る */
 static int scan_int_after(const wchar_t **ps, const wchar_t *lit, int *out) {
@@ -339,13 +320,13 @@ static const wchar_t *translate_resolution_msg(const wchar_t *s) {
         scan_int_after(&p, L" × ", &h) &&
         wcsncmp(p, L"。", 1) == 0) {
         size_t pos = 0; buf[0] = 0;
-        wbuf_appendf(buf, 1024, &pos, L"本作品の最適解像度は %d × %d です。\n\n", w, h);
-        wbuf_appendf(buf, 1024, &pos, L"可能であれば、%d × %d の解像度に設定してください。\n", w, h);
-        wbuf_appendf(buf, 1024, &pos, L"設定できない場合は、最適解像度に近い画面比率を選択してください。\n\n");
-        wbuf_appendf(buf, 1024, &pos, L"<液晶ディスプレイに関する補足>\n");
-        wbuf_appendf(buf, 1024, &pos, L"最適解像度に設定しても、表示がぼやけたり粗くなったりすることがあります。\n");
-        wbuf_appendf(buf, 1024, &pos, L"また、横長・縦長に表示されることがあります。\n");
-        wbuf_appendf(buf, 1024, &pos, L"これはディスプレイの性能によるものであり、あらかじめご了承ください。\n");
+        wbuf_appendf(buf, 1024, &pos, L"本製品の【最適な解像度】は『%d × %d』です。", w, h);
+        wbuf_appendf(buf, 1024, &pos, L"『%d × %d』の解像度が選択できる場合は、それを選択してください。", w, h);
+        wbuf_appendf(buf, 1024, &pos, L"それができない場合は、なるべく【最適な解像度】に近い比率のものを選択してください。");
+        wbuf_appendf(buf, 1024, &pos, L"«液晶モニターについての補足»");
+        wbuf_appendf(buf, 1024, &pos, L"【最適な解像度】にしても表示がぼやけたり、粗くなったりするものがあります。");
+        wbuf_appendf(buf, 1024, &pos, L"また、表示が縦もしくは横に間延びしてしまうものがあります。");
+        wbuf_appendf(buf, 1024, &pos, L"これはモニターの性能上の問題となりますのでご了承ください。");
         buf[1023] = 0;
         return buf;
     }
@@ -355,7 +336,7 @@ static const wchar_t *translate_resolution_msg(const wchar_t *s) {
         p += 8;
         if (scan_int_after(&p, L"", &sec) && wcsstr(p, L"秒后将恢复原本的分辨率")) {
             size_t pos = 0; buf[0] = 0;
-            wbuf_appendf(buf, 1024, &pos, L"解像度を変更しました。\n%d秒後に元の解像度に戻ります。", sec);
+            wbuf_appendf(buf, 1024, &pos, L"解像度を変更しました。%d 秒で元の解像度に戻ります。", sec);
             buf[1023] = 0;
             return buf;
         }
@@ -366,8 +347,9 @@ static const wchar_t *translate_resolution_msg(const wchar_t *s) {
 static const wchar_t *translate_w(const wchar_t *s) {
     static __thread wchar_t buf[1024];
     if (g_jp != 1 || !s) return s;
-    for (int i = 0; kStrMap[i].cn; i++) {
-        if (wstreq(s, kStrMap[i].cn)) return kStrMap[i].jp;
+    ensure_map_loaded();
+    for (size_t i = 0; i < g_map_n; i++) {
+        if (wstreq(s, g_map[i].cn)) return g_map[i].jp;
     }
     {
         const wchar_t *dyn = translate_resolution_msg(s);
