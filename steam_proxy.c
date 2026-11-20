@@ -32,10 +32,17 @@ typedef void  (__cdecl *PFN_SteamAPI_UnregisterCallback)(void*, int);
 
 static void install_ui_hooks(void);
 static void install_gdi_hooks(void);
+static void install_file_hooks(void);
+static void choose_language_noninteractive(void);
 static void ensure_language_selected(void);
+static volatile LONG g_file_hooks=0;
 int   __cdecl wrap_SteamAPI_Init(void);
 
-void* __cdecl wrap_SteamInternal_CreateInterface(const char* a, int* b){ return ((PFN_SteamInternal_CreateInterface)(void*)p_real[0])(a,b); }
+void* __cdecl wrap_SteamInternal_CreateInterface(const char* a, int* b){
+    choose_language_noninteractive();
+    if (g_jp == 1 && InterlockedCompareExchange(&g_file_hooks,1,0)==0) install_file_hooks();
+    return ((PFN_SteamInternal_CreateInterface)(void*)p_real[0])(a,b);
+}
 int   __cdecl wrap_SteamAPI_GetHSteamPipe(void){ return ((PFN_SteamAPI_GetHSteamPipe)(void*)p_real[1])(); }
 int   __cdecl wrap_SteamAPI_GetHSteamUser(void){ return ((PFN_SteamAPI_GetHSteamUser)(void*)p_real[2])(); }
 void  __cdecl wrap_SteamAPI_RunCallbacks(void){ ((PFN_SteamAPI_RunCallbacks)(void*)p_real[3])(); }
@@ -620,8 +627,8 @@ static int rewrite_w(LPCWSTR in, wchar_t *out, size_t cap) {
         lstrcpynW(out, in, (int)pre + 1); lstrcatW(out, suf);
         return file_exists_w(out) ? 1 : 0;
     }
-    const wchar_t *froms[] = { L"\\g00\\", L"/g00\\", L"\\g00/", L"/g00/", L"\\dat\\", L"/dat\\", L"\\dat/", L"/dat/", L"\\mov\\", L"/mov\\", L"\\mov/", L"/mov/", NULL };
-    const wchar_t *tos[]   = { L"\\g00_jp\\", L"/g00_jp\\", L"\\g00_jp/", L"/g00_jp/", L"\\dat_jp\\", L"/dat_jp\\", L"\\dat_jp/", L"/dat_jp/", L"\\mov_jp\\", L"/mov_jp\\", L"\\mov_jp/", L"/mov_jp/", NULL };
+    const wchar_t *froms[] = { L"\\g00\\", L"/g00\\", L"\\g00/", L"/g00/", L"g00\\", L"g00/", L"\\dat\\", L"/dat\\", L"\\dat/", L"/dat/", L"dat\\", L"dat/", L"\\mov\\", L"/mov\\", L"\\mov/", L"/mov/", L"mov\\", L"mov/", NULL };
+    const wchar_t *tos[]   = { L"\\g00_jp\\", L"/g00_jp\\", L"\\g00_jp/", L"/g00_jp/", L"g00_jp\\", L"g00_jp/", L"\\dat_jp\\", L"/dat_jp\\", L"\\dat_jp/", L"/dat_jp/", L"dat_jp\\", L"dat_jp/", L"\\mov_jp\\", L"/mov_jp\\", L"\\mov_jp/", L"/mov_jp/", L"mov_jp\\", L"mov_jp/", NULL };
     for (int i = 0; froms[i]; i++) {
         wchar_t *p = wcsistr(in, froms[i]); if (!p) continue;
         size_t pre = (size_t)(p - in), fl = lstrlenW(froms[i]), rest = lstrlenW(p + fl);
@@ -657,8 +664,8 @@ static int rewrite_a(LPCSTR in, char *out, size_t cap) {
         wchar_t w[MAX_PATH*2]; MultiByteToWideChar(CP_ACP,0,out,-1,w,MAX_PATH*2);
         return file_exists_w(w) ? 1 : 0;
     }
-    const char *froms[] = { "\\g00\\", "/g00\\", "\\g00/", "/g00/", "\\dat\\", "/dat\\", "\\dat/", "/dat/", "\\mov\\", "/mov\\", "\\mov/", "/mov/", NULL };
-    const char *tos[]   = { "\\g00_jp\\", "/g00_jp\\", "\\g00_jp/", "/g00_jp/", "\\dat_jp\\", "/dat_jp\\", "\\dat_jp/", "/dat_jp/", "\\mov_jp\\", "/mov_jp\\", "\\mov_jp/", "/mov_jp/", NULL };
+    const char *froms[] = { "\\g00\\", "/g00\\", "\\g00/", "/g00/", "g00\\", "g00/", "\\dat\\", "/dat\\", "\\dat/", "/dat/", "dat\\", "dat/", "\\mov\\", "/mov\\", "\\mov/", "/mov/", "mov\\", "mov/", NULL };
+    const char *tos[]   = { "\\g00_jp\\", "/g00_jp\\", "\\g00_jp/", "/g00_jp/", "g00_jp\\", "g00_jp/", "\\dat_jp\\", "/dat_jp\\", "\\dat_jp/", "/dat_jp/", "dat_jp\\", "dat_jp/", "\\mov_jp\\", "/mov_jp\\", "\\mov_jp/", "/mov_jp/", "mov_jp\\", "mov_jp/", NULL };
     for (int i = 0; froms[i]; i++) {
         char *p = stristr(in, froms[i]); if (!p) continue;
         size_t pre = (size_t)(p - in), fl = lstrlenA(froms[i]), rest = lstrlenA(p + fl);
@@ -871,12 +878,13 @@ static void ensure_language_selected(void) {
 
 int   __cdecl wrap_SteamAPI_Init(void){
     choose_language_noninteractive();
+    if (g_jp == 1 && InterlockedCompareExchange(&g_file_hooks,1,0)==0) install_file_hooks();
     if (InterlockedCompareExchange(&g_ui_hooks, 1, 0) == 0) {
         install_ui_hooks();
         install_gdi_hooks();
     }
     ensure_language_selected();
-    if (g_jp == 1) install_file_hooks();
+    if (g_jp == 1 && InterlockedCompareExchange(&g_file_hooks,1,0)==0) install_file_hooks();
     int r = ((PFN_SteamAPI_Init)(void*)p_real[6])();
     return r;
 }
