@@ -271,21 +271,48 @@ def gameexe_pack(raw):
 # -------------------- scene pck --------------------
 SCENE_PATCH = {
     "_cl_forclannad": {
-        25: ("【女孩】", "【女の子】"),
+        25: ("【女孩】", ("dbjp","【女孩】")),
         37: ("伊吹老师", "伊吹さん"),
         39: ("伊吹老师", "伊吹先生"),
-        56: ("冈崎", "岡"),
-        57: ("同学", "崎"),
-        79: ("冈崎", "岡"),
-        80: ("同学", "崎"),
-        105: ("冈崎", "岡"),
-        106: ("同学", "崎"),
-        135: ("冈崎", "岡"),
-        136: ("同学", "崎"),
-        114: ("女孩", "女の子"),
-        123: ("女孩", "女の子"),
+        56: ("冈崎", "岡崎"),
+        57: ("同学", "さん"),
+        79: ("冈崎", "岡崎"),
+        80: ("同学", "さん"),
+        105: ("冈崎", "岡崎"),
+        106: ("同学", "さん"),
+        135: ("冈崎", "岡崎"),
+        136: ("同学", "さん"),
+        114: ("女孩", ("dbjp","女孩")),
+        123: ("女孩", ("dbjp","女孩")),
     },
 }
+
+_cn2jp_cache={}
+def load_cn2jp(game, force=False):
+    key=str(game)
+    if not force and key in _cn2jp_cache: return _cn2jp_cache[key]
+    out={}
+    for p in sorted((game/'dat').glob('*.dbs')):
+        try:
+            is_utf,blob=decrypt_dbs(p); d=Dbs(blob,is_utf)
+        except Exception: continue
+        if 0 not in d.data_index or 2 not in d.data_index: continue
+        c0=d.data_index.index(0); c2=d.data_index.index(2)
+        for row in d.rows:
+            jp,cn=row[c0],row[c2]
+            if isinstance(jp,str) and jp and isinstance(cn,str) and cn and jp!=cn:
+                out.setdefault(cn,jp)
+    _cn2jp_cache[key]=out
+    return out
+
+def resolve_scene_text(new_text, cn2jp):
+    if isinstance(new_text,tuple) and new_text[0]=='dbjp':
+        key=new_text[1]
+        if key in cn2jp: return cn2jp[key]
+        if key.startswith('【') and key.endswith('】') and key[1:-1] in cn2jp:
+            return '【'+cn2jp[key[1:-1]]+'】'
+        return key
+    return new_text
 
 def _scene_decode(blob):
     data=_crypt1_xor(blob, CLANNAD_KEY)
@@ -434,13 +461,14 @@ class ScenePck:
             offset+=len(blob)
         return self.raw[:self.info_offset]+b''.join(entries)+b''.join(blobs)+self.tail
 
-def build_scene_jp(src,out,log=print):
+def build_scene_jp(src,out,log=print,cn2jp=None):
     src,out=Path(src),Path(out)
     if not src.is_file(): raise RuntimeError('SceneZH.pckが見つかりません: %s'%src)
     original=src.read_bytes()
     pck=ScenePck(original)
     log('[scene] %s: %dシーン / 未参照データ %d bytes保持'%(src.name,pck.count,len(pck.tail)))
     indices={name:i for i,name in enumerate(pck.names)}
+    if cn2jp is None: cn2jp={}
     new_blobs={}; shifted=False
     for scene,items in SCENE_PATCH.items():
         if scene not in indices: raise RuntimeError('SceneJP対象シーンが見つかりません: %s'%scene)
@@ -448,7 +476,8 @@ def build_scene_jp(src,out,log=print):
         decoded=_scene_decode(pck.blob(index))
         header,entries=_scene_table(decoded)
         edits={}
-        for string_index,(old_text,new_text) in sorted(items.items()):
+        for string_index,(old_text,new_text_raw) in sorted(items.items()):
+            new_text=resolve_scene_text(new_text_raw,cn2jp)
             current=_scene_string(decoded,header,entries,string_index)
             if current not in (old_text,new_text):
                 raise RuntimeError('%s[%d] が想定外です: %r (期待 %r)'%(scene,string_index,current,old_text))
@@ -477,7 +506,8 @@ def build_scene_jp(src,out,log=print):
         scene=pck.names[i]
         decoded=_scene_decode(check.blob(i))
         header,entries=_scene_table(decoded)
-        for string_index,(_,new_text) in SCENE_PATCH[scene].items():
+        for string_index,(_,new_text_raw) in SCENE_PATCH[scene].items():
+            new_text=resolve_scene_text(new_text_raw,cn2jp)
             if _scene_string(decoded,header,entries,string_index)!=new_text:
                 raise RuntimeError('SceneJP反映NG: %s[%d]'%(scene,string_index))
     if not shifted and len(data)!=len(original):
@@ -591,37 +621,70 @@ def _fmt_size(n, unit):
         return f'{int(v)} {unit}'
     return f'{v:.1f} {unit}'
 
+_curl_bin_cache=[]
+def _curl_bin():
+    """curl があればそのパスを返す (なければ None)。"""
+    if not _curl_bin_cache:
+        _curl_bin_cache.append(shutil.which('curl'))
+    return _curl_bin_cache[0]
+
+def _curl_get(url, headers=None, progress=True):
+    """curl で URL を取得して bytes を返す。curl が無い場合は None。"""
+    curl=_curl_bin()
+    if not curl: return None
+    fd,tmp=tempfile.mkstemp(prefix='clannad_dl_'); os.close(fd)
+    try:
+        cmd=[curl,'-L','--fail','--retry','3','--retry-delay','2','--connect-timeout','20']
+        cmd+=['--progress-bar'] if progress else ['--silent','--show-error']
+        cmd+=['-o',tmp]
+        for k,v in (headers or {}).items():
+            cmd+=['-H',f'{k}: {v}']
+        cmd.append(url)
+        r=subprocess.run(cmd)
+        if r.returncode!=0:
+            raise RuntimeError('curl failed (exit %d): %s'%(r.returncode,url))
+        return Path(tmp).read_bytes()
+    finally:
+        try: os.unlink(tmp)
+        except OSError: pass
+
 def _download_to_file(url, dest, headers=None, min_size=0, expected_sha256=None):
     if not expected_sha256 or not re.fullmatch(r'[0-9a-fA-F]{64}', expected_sha256):
         raise RuntimeError('expected SHA-256 hash is required for download: %s' % url)
-    req=urllib.request.Request(url, headers=headers or {'User-Agent':'clannad-jp-installer'})
-    with urllib.request.urlopen(req) as r:
-        total=r.getheader('Content-Length')
-        try: total=int(total) if total else None
-        except Exception: total=None
-        if total is not None and total <= 0:
-            total=None
-        data=bytearray(); read=0; chunk=1024*64
-        digest=hashlib.sha256()
-        u=_pick_unit(total) if total else 'B'
-        while True:
-            b=r.read(chunk)
-            if not b: break
-            data.extend(b); read+=len(b)
-            digest.update(b)
-            if not total: u=_pick_unit(read or 1)
-            if total:
-                pct=min(100, read*100//total)
-                msg=f'  {_fmt_size(read,u)}/{_fmt_size(total,u)} ({pct}%)'
-            else:
-                msg=f'  {_fmt_size(read,u)}'
-            print(f'\r{msg:<60}', end='', flush=True)
-        print()
+    headers=headers or {'User-Agent':'clannad-jp-installer'}
+    data=_curl_get(url, headers)
+    if data is None:
+        # curl が無い場合は urllib でダウンロード（進捗表示付き）
+        req=urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as r:
+            total=r.getheader('Content-Length')
+            try: total=int(total) if total else None
+            except Exception: total=None
+            if total is not None and total <= 0:
+                total=None
+            data=bytearray(); read=0; chunk=1024*64
+            digest=hashlib.sha256()
+            u=_pick_unit(total) if total else 'B'
+            while True:
+                b=r.read(chunk)
+                if not b: break
+                data.extend(b); read+=len(b)
+                digest.update(b)
+                if not total: u=_pick_unit(read or 1)
+                if total:
+                    pct=min(100, read*100//total)
+                    msg=f'  {_fmt_size(read,u)}/{_fmt_size(total,u)} ({pct}%)'
+                else:
+                    msg=f'  {_fmt_size(read,u)}'
+                print(f'\r{msg:<60}', end='', flush=True)
+            print()
+        digest=digest.hexdigest()
+    else:
+        digest=hashlib.sha256(data).hexdigest()
     if len(data) < min_size:
         raise RuntimeError('downloaded file too small')
-    actual=digest.hexdigest()
-    if actual != expected_sha256.lower():
-        raise RuntimeError('SHA-256 mismatch for %s: expected %s, got %s'%(dest,expected_sha256,actual))
+    if digest != expected_sha256.lower():
+        raise RuntimeError('SHA-256 mismatch for %s: expected %s, got %s'%(dest,expected_sha256,digest))
     atomic_write(dest, bytes(data))
 
 def _verify_file_sha256(path, expected_sha256, label):
@@ -637,9 +700,14 @@ def _verify_file_sha256(path, expected_sha256, label):
 
 def get_latest_proxy_asset():
     api=f'https://api.github.com/repos/{PROXY_REPO}/releases/latest'
-    req=urllib.request.Request(api, headers={'User-Agent':'clannad-jp-installer','Accept':'application/vnd.github+json'})
-    with urllib.request.urlopen(req) as r:
-        rel=json.load(r)
+    api_headers={'User-Agent':'clannad-jp-installer','Accept':'application/vnd.github+json'}
+    data=_curl_get(api, api_headers, progress=False)
+    if data is not None:
+        rel=json.loads(data)
+    else:
+        req=urllib.request.Request(api, headers=api_headers)
+        with urllib.request.urlopen(req, timeout=30) as r:
+            rel=json.load(r)
     asset=None
     for a in rel.get('assets',[]):
         if a.get('name')==PROXY_ASSET:
@@ -677,6 +745,14 @@ def ensure_proxy(game, proxy_source='latest', proxy_path=None, proxy_sha256=None
         print(f'[proxy] installed {dst}')
         return
     path=Path(proxy_path) if proxy_path else None
+    if proxy_source=='dev':
+        path=Path(__file__).resolve().parent/PROXY_ASSET
+        if not path.exists():
+            raise RuntimeError(f'proxy dll not found: {path} (make でビルドしてください)')
+        print('[proxy] using development build (SHA-256 check skipped)')
+        shutil.copy2(path, dst)
+        print(f'[proxy] installed {path} -> {dst}')
+        return
     if proxy_source=='local':
         path=Path(__file__).resolve().parent/PROXY_ASSET
     if not path or not path.exists():
@@ -763,6 +839,7 @@ def _download_youtube(url, output_path, ffmpeg):
             'ffmpeg_location': ffmpeg,
             'outtmpl': str(output_path),
             'quiet': False,
+            'source_address': '0.0.0.0',  # --force-ipv4 相当(IPv4のみで接続)
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
@@ -774,6 +851,7 @@ def _download_youtube(url, output_path, ffmpeg):
     if not yt_dlp_bin:
         return None  # not available at all
     r = subprocess.run([yt_dlp_bin,
+                        '--force-ipv4',
                         '--ffmpeg-location', ffmpeg,
                         '-f', 'bestvideo[height<=720]+bestaudio/best[height<=720]',
                         '--merge-output-format', 'mkv',
@@ -875,135 +953,157 @@ def ensure_movie(game):
 
 # -------------------- g00 UI rendering (integrated from make_jp_ui.py) --------------------
 
+def resolve_text(game, it):
+    if 'db' not in it: return it
+    r=it['db']
+    if isinstance(r,str):
+        name,row=r.rsplit(':',1); row=int(row)
+    else:
+        name,row=r
+    p=game/'dat'/name
+    if not p.exists(): return it
+    try:
+        is_utf,blob=decrypt_dbs(p); d=Dbs(blob,is_utf)
+        if 0 not in d.data_index: return it
+        ci=d.data_index.index(0)
+        if not 1<=row<=len(d.rows): return it
+        v=d.rows[row-1][ci]
+        if isinstance(v,str) and v:
+            r=dict(it); r['text']=v
+            return r
+    except Exception:
+        pass
+    return it
+
 UI_SPEC = {
 "files": [
-{"name":"_system_config_ZH","items":[{"box":[10,8,130,32],"text":"環境設定","size":16,"align":"center"}]},
+{"name":"_system_config_ZH","items":[{"box":[10,8,130,32],"db":"text20.dbs:75","size":16,"align":"center"}]},
 {"name":"_system_config_base_ZH","items":[
- {"box":[140,38,246,70],"text":"環境設定","size":24,"align":"center"},
- {"box":[142,123,250,146],"text":"画面モード","size":20,"maxw":130},
- {"box":[142,247,250,268],"text":"画面切り替え","size":20,"maxw":130},
- {"box":[142,370,250,391],"text":"オートモード","size":20,"maxw":130},
- {"box":[142,495,250,516],"text":"文字速度","size":20,"maxw":130},
- {"box":[667,123,770,146],"text":"その他の設定","size":20,"maxw":140},
- {"box":[667,553,770,577],"text":"背景色","size":20,"maxw":140},
- {"box":[168,168,236,198],"text":"ウィンドウ","size":20,"maxw":150},
- {"box":[328,168,450,198],"text":"フルスクリーン","size":20,"maxw":250,"dx":-25},
- {"box":[168,296,236,326],"text":"遅い","size":20},
- {"box":[328,296,386,326],"text":"速い","size":20},
- {"box":[488,296,596,326],"text":"ウェイトなし","size":20,"maxw":115},
- {"box":[168,419,236,449],"text":"遅い","size":20},
- {"box":[328,419,386,449],"text":"速い","size":20},
- {"box":[488,419,596,449],"text":"ウェイトなし","size":20,"maxw":115},
- {"box":[150,520,184,543],"text":"遅","size":14},
- {"box":[566,520,598,543],"text":"速","size":14,"align":"right"},
+ {"box":[140,38,246,70],"db":"text20.dbs:75","size":24,"align":"center"},
+ {"box":[142,123,250,146],"db":"text20.dbs:77","size":20,"maxw":130},
+ {"box":[142,247,250,268],"db":"text20.dbs:86","size":20,"maxw":130},
+ {"box":[142,370,250,391],"db":"text20.dbs:147","size":20,"maxw":130},
+ {"box":[142,495,250,516],"db":"text20.dbs:113","size":20,"maxw":130},
+ {"box":[667,123,770,146],"db":"text20.dbs:116","size":20,"maxw":140},
+ {"box":[667,553,770,577],"db":"text20.dbs:106","size":20,"maxw":140},
+ {"box":[168,168,236,198],"db":"text22.dbs:106","size":20,"maxw":150},
+ {"box":[328,168,450,198],"db":"text20.dbs:78","size":20,"maxw":250,"dx":-25},
+ {"box":[168,296,236,326],"db":"text22.dbs:165","size":20},
+ {"box":[328,296,386,326],"db":"text22.dbs:166","size":20},
+ {"box":[488,296,596,326],"db":"text20.dbs:114","size":20,"maxw":115},
+ {"box":[168,419,236,449],"db":"text22.dbs:165","size":20},
+ {"box":[328,419,386,449],"db":"text22.dbs:166","size":20},
+ {"box":[488,419,596,449],"db":"text20.dbs:114","size":20,"maxw":115},
+ {"box":[150,520,184,543],"db":"text22.dbs:165","size":14},
+ {"box":[566,520,598,543],"db":"text22.dbs:166","size":14,"align":"right"},
  {"box":[670,582,708,606],"text":"減","size":14},
  {"box":[1088,582,1126,606],"text":"増","size":14,"align":"right"},
- {"box":[704,168,1110,199],"text":"日付を表示する","size":20},
- {"box":[704,219,1110,249],"text":"未読の文章も早送りできるようにする","size":20},
- {"box":[704,271,1110,301],"text":"ホイールの下回しで文章を読み進める","size":20},
- {"box":[704,324,1110,354],"text":"他のプログラムの動作を優先する","size":20},
- {"box":[704,376,1110,406],"text":"音に雑音が入る場合はチェックする","size":20},
- {"box":[704,429,1110,459],"text":"クリックで画面暗転をスキップする","size":20}
+ {"box":[704,168,1110,199],"text":"日付ウィンドウを表示する","size":20},
+ {"box":[704,219,1110,249],"db":"text22.dbs:267","size":20},
+ {"box":[704,271,1110,301],"db":"text20.dbs:120","size":20},
+ {"box":[704,312,1110,362],"lines":["本プログラムの動作を遅くして、","他のプログラムがスムーズに動作するようにする。"],"size":16,"line_gap":20,"cy_base":327},
+ {"box":[704,376,1110,406],"db":"text20.dbs:119","size":20},
+ {"box":[704,429,1110,459],"db":"text22.dbs:263","size":20}
 ]},
-{"name":"_system_all_reset_ZH","items":[{"box":[5,8,135,32],"text":"初期設定に戻す","size":16,"align":"center","maxw":120,"bgfile":"_system_return_ZH","bgx":[124,130]}]},
-{"name":"_system_button_cgmode_ZH","items":[{"box":[10,8,130,32],"text":"CG鑑賞","size":16,"align":"center"}]},
-{"name":"_system_button_musicmode_ZH","items":[{"box":[10,8,130,32],"text":"音楽鑑賞","size":16,"align":"center"}]},
-{"name":"_system_button_no_ZH","items":[{"box":[10,8,130,32],"text":"いいえ","size":16,"align":"center"}]},
-{"name":"_system_button_yes_ZH","items":[{"box":[10,8,130,32],"text":"はい","size":16,"align":"center"}]},
-{"name":"_system_display_ZH","items":[{"box":[10,8,130,32],"text":"画面設定","size":16,"align":"center"}]},
-{"name":"_system_font_ZH","items":[{"box":[10,8,130,32],"text":"フォント設定","size":16,"align":"center"}]},
+{"name":"_system_all_reset_ZH","items":[{"box":[5,8,135,32],"db":"text20.dbs:51","size":16,"align":"center","maxw":120,"bgfile":"_system_return_ZH","bgx":[124,130]}]},
+{"name":"_system_button_cgmode_ZH","items":[{"box":[10,8,130,32],"db":"text20.dbs:152","size":16,"align":"center"}]},
+{"name":"_system_button_musicmode_ZH","items":[{"box":[10,8,130,32],"db":"text20.dbs:155","size":16,"align":"center"}]},
+{"name":"_system_button_no_ZH","items":[{"box":[10,8,130,32],"db":"text20.dbs:15","size":16,"align":"center"}]},
+{"name":"_system_button_yes_ZH","items":[{"box":[10,8,130,32],"db":"text20.dbs:14","size":16,"align":"center"}]},
+{"name":"_system_display_ZH","items":[{"box":[10,8,130,32],"db":"text22.dbs:103","size":16,"align":"center"}]},
+{"name":"_system_font_ZH","items":[{"box":[10,8,130,32],"db":"text20.dbs:102","size":16,"align":"center"}]},
 {"name":"_system_font_reset_ZH","items":[{"box":[10,8,130,32],"text":"フォント初期化","size":16,"align":"center"}]},
-{"name":"_system_load_btn_ZH","items":[{"box":[10,8,130,32],"text":"ロード","size":16,"align":"center"}]},
-{"name":"_system_movie_ZH","items":[{"box":[5,8,135,32],"text":"ムービー再生設定","size":16,"align":"center","maxw":120,"bgfile":"_system_return_ZH","bgx":[124,130]}]},
-{"name":"_system_return_ZH","items":[{"box":[10,8,130,32],"text":"戻る","size":16,"align":"center"}]},
-{"name":"_system_save_btn_ZH","items":[{"box":[10,8,130,32],"text":"セーブ","size":16,"align":"center"}]},
-{"name":"_system_sound_ZH","items":[{"box":[10,8,130,32],"text":"音量設定","size":16,"align":"center"}]},
-{"name":"_system_sound__ZH","items":[{"box":[10,8,130,32],"text":"音量設定","size":16,"align":"center"}]},
-{"name":"_system_voice_ZH","items":[{"box":[10,8,130,32],"text":"キャラボイス設定","size":16,"align":"center"}]},
-{"name":"_system_rmenu_auto_ZH","items":[{"box":[20,8,280,42],"text":"オートモード","size":20,"align":"center"}]},
-{"name":"_system_rmenu_cancel_ZH","items":[{"box":[20,8,280,42],"text":"キャンセル","size":20,"align":"center"}]},
-{"name":"_system_rmenu_config_ZH","items":[{"box":[20,8,280,42],"text":"環境設定","size":20,"align":"center"}]},
-{"name":"_system_rmenu_load_ZH","items":[{"box":[20,8,280,42],"text":"ロード","size":20,"align":"center"}]},
-{"name":"_system_rmenu_return_ZH","items":[{"box":[20,8,280,42],"text":"タイトルに戻る","size":20,"align":"center"}]},
-{"name":"_system_rmenu_save_ZH","items":[{"box":[20,8,280,42],"text":"セーブ","size":20,"align":"center"}]},
-{"name":"_system_rmenu_select_ZH","items":[{"box":[20,8,280,42],"text":"前の選択肢に戻る","size":20,"align":"center"}]},
-{"name":"_system_rmenu_skip_ZH","items":[{"box":[20,8,280,42],"text":"既読文章を早送り","size":20,"align":"center"}]},
-{"name":"_system_cgmode_base_ZH","items":[{"box":[56,28,172,64],"text":"CG鑑賞","size":22,"align":"center"},{"box":[218,44,342,76],"text":"CG達成率","size":22}]},
-{"name":"_system_load_base_ZH","items":[{"box":[56,28,172,64],"text":"ロード","size":22,"align":"center"}]},
-{"name":"_system_save_base_ZH","items":[{"box":[56,28,172,64],"text":"セーブ","size":22,"align":"center"}]},
-{"name":"_system_musicmode_base_ZH","items":[{"box":[56,28,172,64],"text":"音楽鑑賞","size":22,"align":"center"}]},
+{"name":"_system_load_btn_ZH","items":[{"box":[10,8,130,32],"db":"text20.dbs:127","size":16,"align":"center"}]},
+{"name":"_system_movie_ZH","items":[{"box":[5,8,135,32],"db":"text20.dbs:104","size":16,"align":"center","maxw":120,"bgfile":"_system_return_ZH","bgx":[124,130]}]},
+{"name":"_system_return_ZH","items":[{"box":[10,8,130,32],"db":"text20.dbs:162","size":16,"align":"center"}]},
+{"name":"_system_save_btn_ZH","items":[{"box":[10,8,130,32],"db":"text20.dbs:126","size":16,"align":"center"}]},
+{"name":"_system_sound_ZH","items":[{"box":[10,8,130,32],"db":"text22.dbs:177","size":16,"align":"center"}]},
+{"name":"_system_sound__ZH","items":[{"box":[10,8,130,32],"db":"text22.dbs:177","size":16,"align":"center"}]},
+{"name":"_system_voice_ZH","items":[{"box":[10,8,130,32],"db":"text22.dbs:239","size":16,"align":"center","maxw":128}]},
+{"name":"_system_rmenu_auto_ZH","items":[{"box":[20,8,280,42],"db":"text20.dbs:147","size":20,"align":"center"}]},
+{"name":"_system_rmenu_cancel_ZH","items":[{"box":[20,8,280,42],"db":"text20.dbs:52","size":20,"align":"center"}]},
+{"name":"_system_rmenu_config_ZH","items":[{"box":[20,8,280,42],"db":"text20.dbs:75","size":20,"align":"center"}]},
+{"name":"_system_rmenu_load_ZH","items":[{"box":[20,8,280,42],"db":"text20.dbs:127","size":20,"align":"center"}]},
+{"name":"_system_rmenu_return_ZH","items":[{"box":[20,8,280,42],"db":"text20.dbs:134","size":20,"align":"center"}]},
+{"name":"_system_rmenu_save_ZH","items":[{"box":[20,8,280,42],"db":"text20.dbs:126","size":20,"align":"center"}]},
+{"name":"_system_rmenu_select_ZH","items":[{"box":[20,8,280,42],"db":"text20.dbs:129","size":20,"align":"center"}]},
+{"name":"_system_rmenu_skip_ZH","items":[{"box":[20,8,280,42],"db":"text20.dbs:123","size":20,"align":"center"}]},
+{"name":"_system_cgmode_base_ZH","items":[{"box":[56,28,172,64],"db":"text20.dbs:152","size":22,"align":"center"},{"box":[218,44,342,76],"db":"text20.dbs:151","size":22}]},
+{"name":"_system_load_base_ZH","items":[{"box":[56,28,172,64],"db":"text20.dbs:127","size":22,"align":"center"}]},
+{"name":"_system_save_base_ZH","items":[{"box":[56,28,172,64],"db":"text20.dbs:126","size":22,"align":"center"}]},
+{"name":"_system_musicmode_base_ZH","items":[{"box":[56,28,172,64],"db":"text20.dbs:155","size":22,"align":"center"}]},
 {"name":"_system_sound_base_ZH","items":[
- {"box":[140,38,246,70],"text":"音量設定","size":24,"align":"center"},
- {"box":[142,123,250,146],"text":"音量","size":20,"maxw":130},
- {"box":[180,184,330,210],"text":"全体音量","size":18,"maxw":140},
- {"box":[180,403,264,429],"text":"ボイス","size":18,"maxw":140},
- {"box":[180,549,330,575],"text":"効果音","size":18,"maxw":140},
- {"box":[180,622,330,648],"text":"システム音","size":18,"maxw":140},
- {"box":[180,695,330,721],"text":"ムービー音声","size":18,"maxw":140},
- {"box":[410,330,600,356],"text":"BGMフェード","size":18,"maxw":170},
- {"box":[410,476,760,502],"text":"次の文章に進んでもボイスを止めない","size":18,"maxw":330},
+ {"box":[140,38,246,70],"db":"text22.dbs:177","size":24,"align":"center"},
+ {"box":[142,123,250,146],"db":"text22.dbs:90","size":20,"maxw":130},
+ {"box":[180,184,330,210],"db":"text22.dbs:184","size":18,"maxw":140},
+ {"box":[180,403,264,429],"db":"text20.dbs:96","size":18,"maxw":140},
+ {"box":[180,549,330,575],"db":"text20.dbs:94","size":18,"maxw":140},
+ {"box":[180,622,330,648],"db":"text20.dbs:95","size":18,"maxw":140},
+ {"box":[180,695,330,721],"db":"text22.dbs:189","size":18,"maxw":140},
+ {"box":[410,330,600,356],"db":"text22.dbs:196","size":18,"maxw":170},
+ {"box":[410,476,760,502],"db":"text22.dbs:266","size":18,"maxw":330},
  {"box":[1046,184,1110,210],"text":"消音","size":18},{"box":[1046,257,1110,283],"text":"消音","size":18},
  {"box":[1046,403,1110,429],"text":"消音","size":18},{"box":[1046,549,1110,575],"text":"消音","size":18},
  {"box":[1046,622,1110,648],"text":"消音","size":18},{"box":[1046,695,1110,721],"text":"消音","size":18}
 ]},
-{"name":"_system_voice_base_ZH","items":[{"box":[140,38,246,70],"text":"ボイス設定","size":22,"align":"center"},{"box":[142,123,250,146],"text":"キャラボイス","size":18,"maxw":125}]},
+{"name":"_system_voice_base_ZH","items":[{"box":[140,38,246,70],"db":"text22.dbs:239","size":22,"align":"center","maxw":132},{"box":[142,123,250,146],"db":"text20.dbs:98","size":18,"maxw":125}]},
 {"name":"_system_dialog_base_ZH","items":[
- {"cuts":[0],"box":[20,62,503,102],"text":"タイトルに戻ってもよろしいですか？","size":26,"align":"center","maxw":470},
- {"cuts":[1],"box":[20,62,503,102],"text":"ロードしてもよろしいですか？","size":26,"align":"center","maxw":470},
- {"cuts":[2,4],"box":[20,62,503,102],"text":"セーブしてもよろしいですか？","size":26,"align":"center","maxw":470},
- {"cuts":[3],"box":[20,62,503,102],"text":"ゲームを終了してもよろしいですか？","size":26,"align":"center","maxw":470},
- {"cuts":[0,1,2,3,4],"box":[118,196,503,228],"text":"今後このメッセージを表示しない","size":18,"maxw":380},
- {"cuts":[6],"box":[20,29,503,59],"text":"【AFTER STORY】の開始時に","size":22,"align":"center","maxw":470},
- {"cuts":[6],"box":[20,66,503,96],"text":"渚ルートのゲーム進行状況を読み込みます。","size":22,"align":"center","maxw":470},
- {"cuts":[6],"box":[20,103,503,133],"text":"今回の進行状況をセーブしますか？","size":22,"align":"center","maxw":470},
- {"cuts":[7],"box":[20,63,503,99],"text":"ゲームの進行状況をセーブしました。","size":26,"align":"center","maxw":470},
- {"cuts":[8],"box":[20,63,503,99],"text":"ゲームは渚ルートの進行状況から始まります。","size":26,"align":"center","maxw":470}
+ {"cuts":[0],"box":[20,62,503,102],"db":"text20.dbs:135","size":26,"align":"center","maxw":470},
+ {"cuts":[1],"box":[20,62,503,102],"db":"text20.dbs:35","size":26,"align":"center","maxw":470},
+ {"cuts":[2,4],"box":[20,62,503,102],"db":"text20.dbs:36","size":26,"align":"center","maxw":470},
+ {"cuts":[3],"box":[20,62,503,102],"db":"text20.dbs:138","size":26,"align":"center","maxw":470},
+ {"cuts":[0,1,2,3,4],"box":[118,196,503,228],"db":"text20.dbs:671","size":18,"maxw":380},
+ {"cuts":[6],"box":[20,29,503,59],"text":"渚シナリオのプレイデータは","size":19,"align":"center","maxw":480},
+ {"cuts":[6],"box":[20,66,503,96],"text":"【ＡＦＴＥＲ ＳＴＯＲＹ】の開始時に","size":19,"align":"center","maxw":480},
+ {"cuts":[6],"box":[20,103,503,133],"text":"引き継がれます。今回のプレイデータを保存しますか？","size":19,"align":"center","maxw":480},
+ {"cuts":[7],"box":[20,63,503,99],"db":"text20.dbs:16","size":26,"align":"center","maxw":470},
+ {"cuts":[8],"box":[20,63,503,99],"db":"text20.dbs:17","size":26,"align":"center","maxw":470}
 ]},
 {"name":"_system_saveload_none_ZH","items":[
- {"cuts":[0],"box":[140,140,340,192],"text":"データなし","size":26,"align":"center","absdiff":True,"shadow":[2,2,[20,70,120]]},
- {"cuts":[1],"box":[140,140,340,192],"text":"データなし","size":26,"align":"center","absdiff":True,"shadow":[2,2,[90,30,30]]}
+ {"cuts":[0],"box":[140,140,340,192],"db":"text22.dbs:43","size":26,"align":"center","absdiff":True,"shadow":[2,2,[20,70,120]]},
+ {"cuts":[1],"box":[140,140,340,192],"db":"text22.dbs:51","size":26,"align":"center","absdiff":True,"shadow":[2,2,[90,30,30]]}
 ]},
-{"name":"_system_vo_fuko_ZH","items":[{"style":"vo","box":[96,10,158,50],"text":"風子","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
-{"name":"_system_vo_kappei_ZH","items":[{"style":"vo","box":[90,10,158,50],"text":"勝平","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
+{"name":"_system_vo_fuko_ZH","items":[{"style":"vo","box":[96,10,158,50],"db":"text23.dbs:219","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
+{"name":"_system_vo_kappei_ZH","items":[{"style":"vo","box":[90,10,158,50],"db":"text23.dbs:155","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
 {"name":"_system_vo_yukine_ZH","items":[{"style":"vo","box":[90,10,158,50],"text":"有紀寧","size":17,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
-{"name":"_system_vo_sonota_ZH","items":[{"style":"vo","box":[96,10,158,50],"text":"その他","size":17,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
-{"name":"_system_vo_botan_ZH","items":[{"style":"vo","box":[105,12,154,46],"text":"ボタン","size":17,"maxw":52,"cx":129,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
-{"name":"_system_vo_kotomi_ZH","items":[{"style":"vo","box":[90,10,158,50],"text":"ことみ","size":17,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
-{"name":"_system_vo_naouyuki_ZH","items":[{"style":"vo","box":[96,10,158,50],"text":"直幸","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
-{"name":"_system_smenu_04_ZH","items":[{"box":[20,8,450,42],"text":"町、時の流れ、人","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_06_ZH","items":[{"box":[20,8,450,42],"text":"渚〜坂の下の別れ","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_07_ZH","items":[{"box":[20,8,450,42],"text":"それは風のように","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_10_ZH","items":[{"box":[20,8,450,42],"text":"は～りぃすたーふぃっしゅ","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_11_ZH","items":[{"box":[20,8,450,42],"text":"彼女の本気","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_12_ZH","items":[{"box":[20,8,450,42],"text":"資料室のお茶会","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_13_ZH","items":[{"box":[20,8,450,42],"text":"東風","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_14_ZH","items":[{"box":[20,8,450,42],"text":"東風 -afternoon-","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_15_ZH","items":[{"box":[20,8,450,42],"text":"東風 -tempo up-","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_16_ZH","items":[{"box":[20,8,450,42],"text":"東風 -piano-","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_17_ZH","items":[{"box":[20,8,450,42],"text":"田舎小径","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_18_ZH","items":[{"box":[20,8,450,42],"text":"有意義な時間の過ごし方","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_19_ZH","items":[{"box":[20,8,450,42],"text":"有意義な時間の過ごし方 -guitar-","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_20_ZH","items":[{"box":[20,8,450,42],"text":"有意義な時間の過ごし方 -sax-","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_21_ZH","items":[{"box":[20,8,450,42],"text":"日々の遑","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_22_ZH","items":[{"box":[20,8,450,42],"text":"ダム","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_23_ZH","items":[{"box":[20,8,450,42],"text":"馬鹿ふたり","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_24_ZH","items":[{"box":[20,8,450,42],"text":"灰燼に帰す","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_28_ZH","items":[{"box":[20,8,450,42],"text":"月の位相","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_29_ZH","items":[{"box":[20,8,450,42],"text":"無間","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_30_ZH","items":[{"box":[20,8,450,42],"text":"潮鳴り","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_31_ZH","items":[{"box":[20,8,450,42],"text":"潮鳴りに","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_32_ZH","items":[{"box":[20,8,450,42],"text":"同じ高みへ","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_33_ZH","items":[{"box":[20,8,450,42],"text":"空に光る","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_34_ZH","items":[{"box":[20,8,450,42],"text":"願いが叶う場所","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_35_ZH","items":[{"box":[20,8,450,42],"text":"願いが叶う場所に","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_36_ZH","items":[{"box":[20,8,450,42],"text":"白詰草","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_37_ZH","items":[{"box":[20,8,450,42],"text":"遥かな年月","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_38_ZH","items":[{"box":[20,8,450,42],"text":"遥かな年月 -piano-","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_39_ZH","items":[{"box":[20,8,450,42],"text":"夏時間","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_40_ZH","items":[{"box":[20,8,450,42],"text":"カントリートレイン","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_42_ZH","items":[{"box":[20,8,450,42],"text":"メグメル","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_43_ZH","items":[{"box":[20,8,450,42],"text":"影二つ","size":20,"align":"center","maxw":430}]},
-{"name":"_system_smenu_45_ZH","items":[{"box":[20,8,450,42],"text":"小さな手のひら","size":20,"align":"center","maxw":430}]}
+{"name":"_system_vo_sonota_ZH","items":[{"style":"vo","box":[96,10,158,50],"db":"text22.dbs:96","size":17,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
+{"name":"_system_vo_botan_ZH","items":[{"style":"vo","box":[105,12,154,46],"db":"text20.dbs:417","size":17,"maxw":52,"cx":129,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
+{"name":"_system_vo_kotomi_ZH","items":[{"style":"vo","box":[90,10,158,50],"db":"text23.dbs:78","size":17,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
+{"name":"_system_vo_naouyuki_ZH","items":[{"style":"vo","box":[96,10,158,50],"db":"text23.dbs:18","size":19,"maxw":62,"ow":2,"cw":0,"bold":False,"bgfile":"_system_vo_nagisa_ZH"}]},
+{"name":"_system_smenu_04_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:169","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_06_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:171","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_07_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:172","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_10_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:175","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_11_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:176","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_12_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:177","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_13_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:178","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_14_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:179","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_15_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:180","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_16_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:181","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_17_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:182","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_18_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:183","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_19_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:184","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_20_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:185","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_21_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:186","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_22_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:187","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_23_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:188","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_24_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:189","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_28_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:193","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_29_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:194","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_30_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:195","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_31_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:196","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_32_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:197","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_33_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:198","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_34_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:199","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_35_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:200","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_36_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:201","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_37_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:202","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_38_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:203","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_39_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:204","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_40_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:205","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_42_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:207","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_43_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:208","size":20,"align":"center","maxw":430}]},
+{"name":"_system_smenu_45_ZH","items":[{"box":[20,8,450,42],"db":"text20.dbs:210","size":20,"align":"center","maxw":430}]}
 ]}
 
 class G00Type2:
@@ -1200,7 +1300,8 @@ def apply_item(img,it,fpath,log,refimg=None,clean=None):
     if not xs: return False
     bx0,bx1,by0,by1=min(xs),max(xs)+1,min(ys),max(ys)+1
     erase_text(img,mask,(x0,y0,x1,y1),rows,it.get('grow',1),cpx)
-    text=it['text']; size=it.get('size') or max(10, round((by1-by0)/0.88)); maxw=it.get('maxw',x1-x0)
+    lines=it.get('lines')
+    text=it.get('text', lines[0] if lines else ''); size=it.get('size') or max(10, round((by1-by0)/0.88)); maxw=it.get('maxw',x1-x0)
     f=get_font(fpath,size)
     while size>9 and f.getlength(text)>maxw:
         size-=1; f=get_font(fpath,size)
@@ -1208,7 +1309,22 @@ def apply_item(img,it,fpath,log,refimg=None,clean=None):
     if align=='center': x=(bx0+bx1)/2-w/2
     elif align=='right': x=bx1-w
     else: x=bx0
-    x+=it.get('dx',0); cy=(by0+by1)/2+it.get('dy',0)
+    x+=it.get('dx',0)
+    if lines:
+        text=lines[0]
+        cy=it.get('cy_base',(by0+by1)/2)
+        line_gap=it.get('line_gap',round(size*1.15))
+        f0=get_font(fpath,size)
+        w=max(f0.getlength(l) for l in lines)
+        lx=(bx0+bx1)/2-w/2 if align=='center' else (bx1-w if align=='right' else bx0)
+        lx+=it.get('dx',0)
+        color=tuple(it.get('color') or (255,255,255)); sc0=tuple(it.get('stroke_color') or (40,100,210))+(255,)
+        sw0=1 if it.get('stroke')=='auto' else it.get('stroke',0)
+        draw=ImageDraw.Draw(img)
+        for li,l in enumerate(lines):
+            draw.text((lx,cy+li*line_gap),l,font=f0,fill=color+(255,),anchor='lm',stroke_width=sw0,stroke_fill=sc0)
+        return True
+    cy=(by0+by1)/2+it.get('dy',0)
     color=it.get('color') or (255,255,255); mode_stroke=None; layers3=None
     if color=='auto':
         if cpx is not None:
@@ -1285,12 +1401,15 @@ def process_ui_file(ent, game, out_dir, fpath, log):
     for c in cuts:
         if c not in obj.cuts: continue
         img=obj.get_image(c); ok=False
-        for it in ent['items']:
-            if c in it.get('cuts',[c]):
-                try:
-                    if apply_item(img,it,fpath,log,get_ref_img(game,it,c),get_clean_img(game,it,c,img.size,log)): ok=True
-                except Exception as e:
-                    log(f'  [ui] {name} cut{c} err {e}')
+        for raw in ent['items']:
+            if c not in raw.get('cuts',[c]): continue
+            it=resolve_text(game,raw)
+            if it.get('lines'):
+                it=dict(it); it['lines']=[resolve_text(game,l)['text'] if isinstance(l,dict) else l for l in it['lines']]
+            try:
+                if apply_item(img,it,fpath,log,get_ref_img(game,it,c),get_clean_img(game,it,c,img.size,log)): ok=True
+            except Exception as e:
+                log(f'  [ui] {name} cut{c} err {e}')
         if ok:
             obj.set_image(c,img); changed=True
     if not changed: return False
@@ -1324,8 +1443,8 @@ def main():
     ap.add_argument('game', nargs='?', type=Path, default=DEFAULT_GAME, help='install directory')
     ap.add_argument('--remove', action='store_true', help='remove JP localization and restore original files')
     ap.add_argument('--strict', action='store_true', help='fail immediately if optional steps (UI/movie) fail')
-    ap.add_argument('--proxy-source', choices=['latest','local','file'], default='latest',
-                    help='proxy dll source: latest GitHub release (default), local ./steam_api.dll, or explicit file')
+    ap.add_argument('--proxy-source', choices=['latest','local','dev','file'], default='latest',
+                    help='proxy dll source: latest GitHub release (default), local ./steam_api.dll (SHA-256 verified against release), dev (local build, no digest check), or explicit file')
     ap.add_argument('--proxy-path', type=Path, help='path to proxy dll when --proxy-source=file')
     ap.add_argument('--proxy-sha256', help='expected SHA-256 for proxy dll (required for --proxy-source=file; optional override for local)')
     a=ap.parse_args(); game=a.game
@@ -1358,6 +1477,10 @@ def main():
     if not (game/'SceneZH.pck').exists():
         raise FileNotFoundError('SceneZH.pck missing: %s' % (game/'SceneZH.pck'))
     (game/'g00_jp').mkdir(exist_ok=True); (game/'dat_jp').mkdir(exist_ok=True)
+    savedata_jp=game/'savedata_jp'
+    if not savedata_jp.exists():
+        savedata_jp.mkdir()
+        print('[savedata_jp] created (日本語版専用の設定・セーブ領域)')
     failed_steps=[]
     # 1 Gameexe
     text=gameexe_unpack(game/'GameexeZH.dat').decode('utf-16-le')
@@ -1370,7 +1493,7 @@ def main():
         raise RuntimeError('GameexeJP round-trip verification failed')
     atomic_write(game/'GameexeJP.dat', packed)
     print('[GameexeJP.dat] written' if newt!=text else '[GameexeJP.dat] unchanged')
-    build_scene_jp(game/'SceneZH.pck',game/'SceneJP.pck')
+    build_scene_jp(game/'SceneZH.pck',game/'SceneJP.pck',cn2jp=load_cn2jp(game))
     # 2 dbs
     total_c=total_w=0
     for p in sorted((game/'dat').iterdir()):
